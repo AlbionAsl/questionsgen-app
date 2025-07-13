@@ -10,19 +10,22 @@ export default function GenerationForm({ onStart }) {
     individualPages: [],
     maxApiCalls: 10,
     questionsPerChunk: 4,
-    // NEW: OpenAI model selection
     openaiModel: 'gpt-4o-mini',
-    // NEW: Custom prompt instructions
     promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
   });
 
   const [animeSearchResults, setAnimeSearchResults] = useState([]);
   const [availableCategories, setAvailableCategories] = useState([]);
+  const [categorySearchTerm, setCategorySearchTerm] = useState('');
+  const [categorySearchResults, setCategorySearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [searchingAnime, setSearchingAnime] = useState(false);
   const [loadingCategories, setLoadingCategories] = useState(false);
+  const [searchingCategories, setSearchingCategories] = useState(false);
   const [newPageInput, setNewPageInput] = useState('');
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [processingStats, setProcessingStats] = useState(null);
 
   // Available OpenAI models
   const openaiModels = [
@@ -75,9 +78,19 @@ export default function GenerationForm({ onStart }) {
 
   useEffect(() => {
     if (formData.fandomWikiName) {
-      fetchCategories(formData.fandomWikiName);
+      fetchInitialCategories(formData.fandomWikiName);
+      fetchProcessingStats(formData.fandomWikiName);
     }
   }, [formData.fandomWikiName]);
+
+  useEffect(() => {
+    if (categorySearchTerm.length >= 2 && formData.fandomWikiName) {
+      const timer = setTimeout(() => searchCategories(categorySearchTerm), 300);
+      return () => clearTimeout(timer);
+    } else if (categorySearchTerm.length === 0) {
+      setCategorySearchResults([]);
+    }
+  }, [categorySearchTerm, formData.fandomWikiName]);
 
   const searchAnime = async (term) => {
     setSearchingAnime(true);
@@ -92,16 +105,39 @@ export default function GenerationForm({ onStart }) {
     }
   };
 
-  const fetchCategories = async (wikiName) => {
+  const fetchInitialCategories = async (wikiName) => {
     setLoadingCategories(true);
     try {
-      const response = await fetch(`${API_URL}/api/generation/wiki/${wikiName}/categories`);
+      const response = await fetch(`${API_URL}/api/generation/wiki/${wikiName}/categories?limit=200`);
       const data = await response.json();
-      setAvailableCategories(data);
+      setAvailableCategories(data.categories || []);
     } catch (error) {
       console.error('Error fetching categories:', error);
     } finally {
       setLoadingCategories(false);
+    }
+  };
+
+  const searchCategories = async (term) => {
+    setSearchingCategories(true);
+    try {
+      const response = await fetch(`${API_URL}/api/generation/wiki/${formData.fandomWikiName}/categories/search?q=${encodeURIComponent(term)}&limit=50`);
+      const data = await response.json();
+      setCategorySearchResults(data.categories || []);
+    } catch (error) {
+      console.error('Error searching categories:', error);
+    } finally {
+      setSearchingCategories(false);
+    }
+  };
+
+  const fetchProcessingStats = async (wikiName) => {
+    try {
+      const response = await fetch(`${API_URL}/api/generation/wiki/${wikiName}/stats`);
+      const data = await response.json();
+      setProcessingStats(data);
+    } catch (error) {
+      console.error('Error fetching processing stats:', error);
     }
   };
 
@@ -140,6 +176,24 @@ export default function GenerationForm({ onStart }) {
       categories: prev.categories.includes(category)
         ? prev.categories.filter(c => c !== category)
         : [...prev.categories, category]
+    }));
+  };
+
+  const handleCategoryAdd = (category) => {
+    if (!formData.categories.includes(category)) {
+      setFormData(prev => ({
+        ...prev,
+        categories: [...prev.categories, category]
+      }));
+    }
+    setCategorySearchTerm('');
+    setShowCategoryDropdown(false);
+  };
+
+  const handleCategoryRemove = (category) => {
+    setFormData(prev => ({
+      ...prev,
+      categories: prev.categories.filter(c => c !== category)
     }));
   };
 
@@ -249,26 +303,117 @@ export default function GenerationForm({ onStart }) {
             </p>
           </div>
 
-          {/* Categories */}
+          {/* Processing Stats */}
+          {processingStats && processingStats.totalChunks > 0 && (
+            <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
+              <h4 className="text-sm font-medium text-blue-800 mb-2">📊 Previous Processing Stats</h4>
+              <div className="text-sm text-blue-700">
+                <p>Total chunks processed: <span className="font-semibold">{processingStats.totalChunks}</span></p>
+                {processingStats.lastProcessed && (
+                  <p>Last processed: <span className="font-semibold">{new Date(processingStats.lastProcessed).toLocaleDateString()}</span></p>
+                )}
+                <p className="mt-1 text-xs">Previously processed chunks will be automatically skipped.</p>
+              </div>
+            </div>
+          )}
+
+          {/* Enhanced Categories Section */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Categories</label>
+            
+            {/* Selected Categories Display */}
+            {formData.categories.length > 0 && (
+              <div className="mb-3">
+                <p className="text-xs text-gray-500 mb-2">Selected categories ({formData.categories.length}):</p>
+                <div className="flex flex-wrap gap-2">
+                  {formData.categories.map((category) => (
+                    <span
+                      key={category}
+                      className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800"
+                    >
+                      {category}
+                      <button
+                        onClick={() => handleCategoryRemove(category)}
+                        className="ml-2 text-blue-600 hover:text-blue-800 focus:outline-none"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Category Search */}
+            <div className="relative mb-3">
+              <input
+                type="text"
+                value={categorySearchTerm}
+                onChange={(e) => {
+                  setCategorySearchTerm(e.target.value);
+                  setShowCategoryDropdown(true);
+                }}
+                onFocus={() => setShowCategoryDropdown(true)}
+                placeholder="Search categories..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
+              />
+              {searchingCategories && (
+                <div className="absolute right-2 top-2">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                </div>
+              )}
+              
+              {/* Category Search Results Dropdown */}
+              {showCategoryDropdown && categorySearchTerm.length >= 2 && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto">
+                  {categorySearchResults.length > 0 ? (
+                    categorySearchResults.map((category) => (
+                      <button
+                        key={category}
+                        onClick={() => handleCategoryAdd(category)}
+                        className={`w-full text-left px-4 py-2 hover:bg-gray-50 text-sm ${
+                          formData.categories.includes(category) ? 'bg-blue-50 text-blue-700' : ''
+                        }`}
+                      >
+                        {category}
+                        {formData.categories.includes(category) && (
+                          <span className="ml-2 text-blue-500">✓</span>
+                        )}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-4 py-2 text-sm text-gray-500">No categories found</div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Initial Categories (when not searching) */}
             {loadingCategories ? (
               <div className="flex items-center justify-center py-4">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
               </div>
-            ) : availableCategories.length > 0 ? (
-              <div className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md p-3">
-                {availableCategories.map((category) => (
-                  <label key={category} className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={formData.categories.includes(category)}
-                      onChange={() => handleCategoryToggle(category)}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                    />
-                    <span className="ml-2 text-sm text-gray-700">{category}</span>
-                  </label>
-                ))}
+            ) : availableCategories.length > 0 && categorySearchTerm.length < 2 ? (
+              <div>
+                <p className="text-xs text-gray-500 mb-2">Available categories (showing first 200):</p>
+                <div className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md p-3">
+                  {availableCategories.slice(0, 50).map((category) => (
+                    <label key={category} className="flex items-center">
+                      <input
+                        type="checkbox"
+                        checked={formData.categories.includes(category)}
+                        onChange={() => handleCategoryToggle(category)}
+                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                      />
+                      <span className="ml-2 text-sm text-gray-700">{category}</span>
+                    </label>
+                  ))}
+                  {availableCategories.length > 50 && (
+                    <p className="text-xs text-gray-500 italic">
+                      Showing 50 of {availableCategories.length} categories. Use search to find more.
+                    </p>
+                  )}
+                </div>
               </div>
             ) : (
               <p className="text-sm text-gray-500">Enter a wiki name to load categories</p>
@@ -304,7 +449,7 @@ export default function GenerationForm({ onStart }) {
                 {formData.individualPages.map((page, index) => (
                   <span
                     key={index}
-                    className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800"
+                    className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800"
                   >
                     {page}
                     <button
@@ -312,7 +457,7 @@ export default function GenerationForm({ onStart }) {
                         ...prev,
                         individualPages: prev.individualPages.filter((_, i) => i !== index)
                       }))}
-                      className="ml-2 text-blue-600 hover:text-blue-800"
+                      className="ml-2 text-green-600 hover:text-green-800"
                     >
                       ×
                     </button>
@@ -438,6 +583,14 @@ export default function GenerationForm({ onStart }) {
           </div>
         </div>
       </div>
+
+      {/* Click outside to close dropdown */}
+      {showCategoryDropdown && (
+        <div 
+          className="fixed inset-0 z-0" 
+          onClick={() => setShowCategoryDropdown(false)}
+        />
+      )}
     </div>
   );
 }

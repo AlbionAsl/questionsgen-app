@@ -154,19 +154,26 @@ ${chunk}
           question: q.question,
           options: q.options,
           correctAnswer: q.correctAnswer,
-          // NEW: Store generation metadata
+          // Enhanced generation metadata
           generationMetadata: {
             model: metadata.model || 'gpt-4o-mini',
             promptInstructions: metadata.promptInstructions || 'default',
-            generatedAt: new Date().toISOString()
+            generatedAt: new Date().toISOString(),
+            generationVersion: '2.0', // Track different versions of generation logic
+            chunkProcessed: true
           },
-          difficulty: 0, // easy
+          // Question analytics
+          difficulty: 0, // Can be updated based on user feedback
           dislikes: 0,
           likes: 0,
           totalAnswers: 0,
           correctAnswers: 0,
+          accuracyRate: 0, // Will be calculated: correctAnswers / totalAnswers
+          // Random field for random sampling
           random: Math.random(),
+          // Timestamps
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       } catch (error) {
         console.error(`[Questions] Error preparing question ${index + 1}:`, error.message);
@@ -201,6 +208,16 @@ ${chunk}
       query = query.where('category', '==', filters.category);
     }
 
+    // Add difficulty filter if provided
+    if (filters.difficulty !== undefined) {
+      query = query.where('difficulty', '==', filters.difficulty);
+    }
+
+    // Add model filter if provided
+    if (filters.model) {
+      query = query.where('generationMetadata.model', '==', filters.model);
+    }
+
     if (filters.limit) {
       query = query.limit(filters.limit);
     }
@@ -211,7 +228,10 @@ ${chunk}
       const snapshot = await query.get();
       return snapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        // Convert timestamps to readable format
+        createdAt: doc.data().createdAt ? doc.data().createdAt.toDate() : null,
+        updatedAt: doc.data().updatedAt ? doc.data().updatedAt.toDate() : null,
       }));
     } catch (error) {
       console.error('Error fetching questions:', error.message);
@@ -228,9 +248,15 @@ ${chunk}
         total: snapshot.size,
         byAnime: {},
         byCategory: {},
-        byModel: {}, // NEW: Stats by AI model used
-        recentQuestions: []
+        byModel: {}, // Stats by AI model used
+        byDifficulty: { 0: 0, 1: 0, 2: 0 }, // Easy, Medium, Hard
+        recentQuestions: [],
+        averageAccuracy: 0,
+        totalAnswered: 0
       };
+
+      let totalAccuracy = 0;
+      let questionsWithAnswers = 0;
 
       snapshot.docs.forEach(doc => {
         const data = doc.data();
@@ -248,7 +274,25 @@ ${chunk}
         // Count by AI model
         const model = data.generationMetadata?.model || 'unknown';
         stats.byModel[model] = (stats.byModel[model] || 0) + 1;
+
+        // Count by difficulty
+        if (data.difficulty !== undefined) {
+          stats.byDifficulty[data.difficulty] = (stats.byDifficulty[data.difficulty] || 0) + 1;
+        }
+
+        // Calculate average accuracy
+        if (data.totalAnswers > 0) {
+          stats.totalAnswered += data.totalAnswers;
+          const accuracy = data.correctAnswers / data.totalAnswers;
+          totalAccuracy += accuracy;
+          questionsWithAnswers++;
+        }
       });
+
+      // Calculate average accuracy
+      if (questionsWithAnswers > 0) {
+        stats.averageAccuracy = Math.round((totalAccuracy / questionsWithAnswers) * 100);
+      }
 
       // Get recent questions
       const recentSnapshot = await db.collection('questions')
@@ -258,12 +302,182 @@ ${chunk}
       
       stats.recentQuestions = recentSnapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        createdAt: doc.data().createdAt ? doc.data().createdAt.toDate() : null,
       }));
 
       return stats;
     } catch (error) {
       console.error('Error fetching question stats:', error.message);
+      throw error;
+    }
+  }
+
+  // New method to get questions by chunk processing status
+  async getQuestionsByProcessingStatus(fandomName, processed = true) {
+    const db = getDb();
+    
+    try {
+      let query = db.collection('questions');
+      
+      if (processed) {
+        query = query.where('generationMetadata.chunkProcessed', '==', true);
+      } else {
+        query = query.where('generationMetadata.chunkProcessed', '==', false);
+      }
+      
+      const snapshot = await query.get();
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+    } catch (error) {
+      console.error('Error fetching questions by processing status:', error.message);
+      throw error;
+    }
+  }
+
+  // Method to update question analytics (when users answer questions)
+  async updateQuestionAnalytics(questionId, wasCorrect) {
+    const db = getDb();
+    
+    try {
+      const questionRef = db.collection('questions').doc(questionId);
+      
+      await db.runTransaction(async (transaction) => {
+        const doc = await transaction.get(questionRef);
+        
+        if (!doc.exists) {
+          throw new Error('Question not found');
+        }
+        
+        const data = doc.data();
+        const newTotalAnswers = (data.totalAnswers || 0) + 1;
+        const newCorrectAnswers = (data.correctAnswers || 0) + (wasCorrect ? 1 : 0);
+        const newAccuracyRate = newCorrectAnswers / newTotalAnswers;
+        
+        // Auto-adjust difficulty based on accuracy rate
+        let newDifficulty = data.difficulty || 0;
+        if (newTotalAnswers >= 10) { // Only adjust after enough data
+          if (newAccuracyRate > 0.8) {
+            newDifficulty = 0; // Easy
+          } else if (newAccuracyRate > 0.5) {
+            newDifficulty = 1; // Medium
+          } else {
+            newDifficulty = 2; // Hard
+          }
+        }
+        
+        transaction.update(questionRef, {
+          totalAnswers: newTotalAnswers,
+          correctAnswers: newCorrectAnswers,
+          accuracyRate: newAccuracyRate,
+          difficulty: newDifficulty,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+      
+      console.log(`[Questions] Updated analytics for question ${questionId}`);
+    } catch (error) {
+      console.error('Error updating question analytics:', error.message);
+      throw error;
+    }
+  }
+
+  // Method to get random questions for quiz generation
+  async getRandomQuestions(filters = {}, count = 10) {
+    const db = getDb();
+    let query = db.collection('questions');
+
+    // Apply filters
+    if (filters.animeId) {
+      query = query.where('animeId', '==', filters.animeId);
+    }
+    if (filters.animeName) {
+      query = query.where('animeName', '==', filters.animeName);
+    }
+    if (filters.category) {
+      query = query.where('category', '==', filters.category);
+    }
+    if (filters.difficulty !== undefined) {
+      query = query.where('difficulty', '==', filters.difficulty);
+    }
+
+    // Use random sampling for better distribution
+    query = query.where('random', '>=', Math.random()).limit(count);
+
+    try {
+      const snapshot = await query.get();
+      let questions = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+
+      // If we don't have enough questions, try with a different random value
+      if (questions.length < count) {
+        const additionalQuery = db.collection('questions')
+          .where('random', '<=', Math.random())
+          .limit(count - questions.length);
+        
+        // Apply same filters to additional query
+        let filteredAdditionalQuery = additionalQuery;
+        if (filters.animeId) {
+          filteredAdditionalQuery = filteredAdditionalQuery.where('animeId', '==', filters.animeId);
+        }
+        if (filters.animeName) {
+          filteredAdditionalQuery = filteredAdditionalQuery.where('animeName', '==', filters.animeName);
+        }
+        
+        const additionalSnapshot = await filteredAdditionalQuery.get();
+        const additionalQuestions = additionalSnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+        
+        questions = [...questions, ...additionalQuestions];
+      }
+
+      // Shuffle and return requested count
+      return questions
+        .sort(() => Math.random() - 0.5)
+        .slice(0, count);
+        
+    } catch (error) {
+      console.error('Error fetching random questions:', error.message);
+      throw error;
+    }
+  }
+
+  // Method to clean up questions (e.g., remove duplicates, low-quality questions)
+  async cleanupQuestions(options = {}) {
+    const db = getDb();
+    
+    try {
+      let deleteCount = 0;
+      
+      // Remove questions with very low accuracy (if they have enough data)
+      if (options.removeVeryLowAccuracy) {
+        const lowAccuracyQuery = db.collection('questions')
+          .where('totalAnswers', '>=', 20)
+          .where('accuracyRate', '<=', 0.1);
+        
+        const lowAccuracySnapshot = await lowAccuracyQuery.get();
+        const batch = db.batch();
+        
+        lowAccuracySnapshot.docs.forEach(doc => {
+          batch.delete(doc.ref);
+          deleteCount++;
+        });
+        
+        if (deleteCount > 0) {
+          await batch.commit();
+          console.log(`[Questions] Removed ${deleteCount} questions with very low accuracy`);
+        }
+      }
+      
+      return deleteCount;
+    } catch (error) {
+      console.error('Error cleaning up questions:', error.message);
       throw error;
     }
   }

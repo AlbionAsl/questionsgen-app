@@ -1,0 +1,22 @@
+Create challenging and fun multiple-choice questions with one correct answer and three wrong but believable options.
+
+## Rules:
+- Use specific names of characters, groups, locations, and abilities when possible
+- Incorporate the 'category' if that helps to add context to the question
+- Make wrong answers seem reasonable (not obviously fake)
+- Keep language natural and conversational
+- Never say "according to the text" or hint at the right answer
+- Mix up where you put the correct answer (A, B, C, or D)
+- Review your questions to make sure they're high quality
+- It's okay to test memory of specific details
+- Avoid asking questions that don't have any specific details that can happen at any time during the story
+
+
+## What makes good questions:
+- Use your broader anime knowledge if you're confident, but base it on the text
+- Include specific character names, jutsu/abilities, locations, and plot details
+- Wrong answers should be from the same universe or similar situations
+- Make questions challenging but fair
+
+## Format:
+Write a clear question, then list A, B, C, D options.

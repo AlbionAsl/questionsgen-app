@@ -1,7 +1,6 @@
 // server/index.js
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
 
-
 // Add this to the very beginning of your server/index.js file
 // BEFORE any other requires or Firebase initialization
 
@@ -39,13 +38,13 @@ console.log('FIREBASE_CLIENT_EMAIL:', process.env.FIREBASE_CLIENT_EMAIL);
 
 console.log('=== FIREBASE DIAGNOSTIC END ===');
 
-
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const { initializeFirebase } = require('./config/firebase');
 
+// IMPORTANT: Make sure these imports are correct
 const generationRoutes = require('./routes/generation');
 const questionsRoutes = require('./routes/questions');
 
@@ -68,10 +67,38 @@ try {
     process.exit(1);
 }
 
+// Add this temporary debug code to your server/index.js 
+// RIGHT AFTER the require statements and BEFORE app.use()
+
+console.log('=== ROUTE DEBUG START ===');
+
+// Test the imports
+try {
+    const generationRoutes = require('./routes/generation');
+    console.log('Generation routes type:', typeof generationRoutes);
+    console.log('Generation routes is function:', typeof generationRoutes === 'function');
+    console.log('Generation routes keys:', Object.keys(generationRoutes));
+} catch (error) {
+    console.error('Error importing generation routes:', error.message);
+}
+
+try {
+    const questionsRoutes = require('./routes/questions');
+    console.log('Questions routes type:', typeof questionsRoutes);
+    console.log('Questions routes is function:', typeof questionsRoutes === 'function');
+    console.log('Questions routes keys:', Object.keys(questionsRoutes));
+} catch (error) {
+    console.error('Error importing questions routes:', error.message);
+}
+
+console.log('=== ROUTE DEBUG END ===');
+
+// Then your existing code continues...
+
+// Middleware
 app.use(cors({ origin: "http://localhost:3000" }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 
 // Socket.io connection
 io.on('connection', (socket) => {
@@ -81,10 +108,10 @@ io.on('connection', (socket) => {
     });
 });
 
-// --- FIX: Use the correct key 'io' to match the routes ---
+// Set io instance for routes to access
 app.set('io', io);
 
-// API Routes
+// API Routes - THIS IS THE CRITICAL FIX
 app.use('/api/generation', generationRoutes);
 app.use('/api/questions', questionsRoutes);
 

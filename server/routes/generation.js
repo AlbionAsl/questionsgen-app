@@ -13,7 +13,9 @@ router.post('/start', async (req, res) => {
     categories,
     individualPages,
     maxApiCalls,
-    questionsPerChunk
+    questionsPerChunk,
+    openaiModel,
+    promptInstructions
   } = req.body;
 
   const processId = Date.now().toString();
@@ -33,7 +35,9 @@ router.post('/start', async (req, res) => {
       apiCallsMade: 0,
       questionsGenerated: 0,
       startTime: new Date(),
-      logs: []
+      logs: [],
+      openaiModel: openaiModel || 'gpt-4o-mini',
+      promptInstructions: promptInstructions || 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
     };
 
     activeProcesses.set(processId, process);
@@ -103,19 +107,62 @@ router.get('/anime/search/:term', async (req, res) => {
 
 router.get('/wiki/:wikiName/categories', async (req, res) => {
   try {
-    const { search, limit } = req.query;
-    const categories = await scrapingService.getAvailableCategories(
-      req.params.wikiName, 
-      search || '', 
-      parseInt(limit) || 500
-    );
-    res.json(categories);
+    const { search, limit, offset } = req.query;
+    
+    let result;
+    if (search && search.length >= 2) {
+      // Use search functionality
+      result = await scrapingService.searchCategories(
+        req.params.wikiName, 
+        search, 
+        parseInt(limit) || 100
+      );
+    } else {
+      // Get all categories with pagination
+      result = await scrapingService.getAvailableCategories(
+        req.params.wikiName, 
+        '', 
+        parseInt(limit) || 500,
+        parseInt(offset) || 0
+      );
+    }
+    
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+// New endpoint for searching categories specifically
+router.get('/wiki/:wikiName/categories/search', async (req, res) => {
+  try {
+    const { q, limit } = req.query;
+    
+    if (!q || q.length < 2) {
+      return res.json({ categories: [], hasMore: false });
+    }
 
+    const result = await scrapingService.searchCategories(
+      req.params.wikiName, 
+      q, 
+      parseInt(limit) || 50
+    );
+    
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// New endpoint to get processing stats for a fandom
+router.get('/wiki/:wikiName/stats', async (req, res) => {
+  try {
+    const stats = await scrapingService.getProcessingStats(req.params.wikiName);
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Main Generation Logic
 async function generateQuestions(
@@ -188,21 +235,36 @@ async function generateQuestions(
         
         const chunkId = scrapingService.generateChunkId(page.category, page.title, i + 1, fandomWikiName);
 
-        if (!scrapingService.isChunkProcessed(chunkId, fandomWikiName)) {
+        // Check if chunk was already processed (async call)
+        const isProcessed = await scrapingService.isChunkProcessed(chunkId, fandomWikiName);
+        
+        if (!isProcessed) {
           log(`Generating questions for chunk ${i + 1}/${chunks.length}...`);
+          
+          // Pass the OpenAI model and prompt instructions to question generation
           const questions = await questionsService.generateQuestions(
             chunks[i], 
             questionsPerChunk, 
             animeName, 
             page.category, 
-            page.title
+            page.title,
+            {
+              model: process.openaiModel,
+              promptInstructions: process.promptInstructions
+            }
           );
 
           if (questions && questions.length > 0) {
             const count = await questionsService.writeQuestionsToFirestore(
               questions, 
               process.animeId, 
-              { animeName, category: page.category, pageTitle: page.title }
+              { 
+                animeName, 
+                category: page.category, 
+                pageTitle: page.title,
+                model: process.openaiModel,
+                promptInstructions: process.promptInstructions
+              }
             );
             process.questionsGenerated += count;
             log(`Generated ${count} questions.`, 'success');
@@ -210,7 +272,13 @@ async function generateQuestions(
           }
           
           process.apiCallsMade++;
-          scrapingService.markChunkAsProcessed(chunkId, fandomWikiName);
+          
+          // Mark chunk as processed (async call with metadata)
+          await scrapingService.markChunkAsProcessed(chunkId, fandomWikiName, {
+            category: page.category,
+            pageTitle: page.title,
+            chunkNumber: i + 1
+          });
         } else {
           log(`Skipping chunk ${i + 1}/${chunks.length} (already processed).`);
         }

@@ -2,11 +2,12 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const crypto = require('crypto');
+const { getDb } = require('../config/firebase');
+const admin = require('firebase-admin');
 
 class ScrapingService {
   constructor() {
-    // In-memory storage for metadata
-    this.metadataStore = new Map();
+    // Remove in-memory storage - using Firestore instead
   }
 
   createFandomUrl(topic) {
@@ -141,32 +142,45 @@ class ScrapingService {
     return crypto.createHash('md5').update(data).digest('hex');
   }
 
-  // Check if chunk was already processed
-  isChunkProcessed(chunkId, fandomName) {
-    const metadata = this.getMetadata(fandomName);
-    return metadata[chunkId]?.questionsGenerated === true;
-  }
-
-  // Mark chunk as processed
-  markChunkAsProcessed(chunkId, fandomName) {
-    const metadata = this.getMetadata(fandomName);
-    metadata[chunkId] = { questionsGenerated: true };
-  }
-
-  // Get metadata for a fandom
-  getMetadata(fandomName) {
-    if (!this.metadataStore.has(fandomName)) {
-      this.metadataStore.set(fandomName, {});
+  // Check if chunk was already processed using Firestore
+  async isChunkProcessed(chunkId, fandomName) {
+    try {
+      const db = getDb();
+      const doc = await db.collection('processedChunks').doc(chunkId).get();
+      return doc.exists;
+    } catch (error) {
+      console.error('Error checking if chunk is processed:', error.message);
+      // If there's an error, assume not processed to be safe
+      return false;
     }
-    return this.metadataStore.get(fandomName);
   }
 
-  async getAvailableCategories(fandomWikiName, searchTerm = '', limit = 500) {
+  // Mark chunk as processed in Firestore
+  async markChunkAsProcessed(chunkId, fandomName, metadata = {}) {
+    try {
+      const db = getDb();
+      await db.collection('processedChunks').doc(chunkId).set({
+        chunkId,
+        fandomName,
+        category: metadata.category || '',
+        pageTitle: metadata.pageTitle || '',
+        chunkNumber: metadata.chunkNumber || 0,
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        questionsGenerated: true
+      });
+      console.log(`Marked chunk ${chunkId} as processed`);
+    } catch (error) {
+      console.error('Error marking chunk as processed:', error.message);
+      // Don't throw error here as it's not critical for the main flow
+    }
+  }
+
+  async getAvailableCategories(fandomWikiName, searchTerm = '', limit = 1000, offset = 0) {
     const url = this.createFandomUrl(fandomWikiName);
     const params = {
       action: 'query',
       list: 'allcategories',
-      aclimit: limit.toString(),
+      aclimit: Math.min(limit, 500).toString(), // API limit is 500 per request
       format: 'json',
     };
 
@@ -175,56 +189,146 @@ class ScrapingService {
       params.acprefix = searchTerm;
     }
 
+    // Add offset for pagination
+    if (offset > 0) {
+      params.acfrom = offset.toString();
+    }
+
     try {
       const response = await axios.get(url, { params });
       const data = response.data;
 
       if (!data.query || !data.query.allcategories) {
-        return [];
+        return { categories: [], hasMore: false };
       }
 
       // Filter out system categories and apply additional search if needed
-      return data.query.allcategories
+      const categories = data.query.allcategories
         .map(cat => cat['*'])
         .filter(cat => {
           // Filter out system categories
           if (cat.includes('Hidden') || cat.includes('Maintenance') || cat.includes('Templates')) {
             return false;
           }
-          // Additional search filter if searchTerm exists
-          if (searchTerm && !cat.toLowerCase().includes(searchTerm.toLowerCase())) {
+          // Additional search filter if searchTerm exists but no prefix was used
+          if (searchTerm && !params.acprefix && !cat.toLowerCase().includes(searchTerm.toLowerCase())) {
             return false;
           }
           return true;
         });
+
+      // Check if there are more categories to load
+      const hasMore = data.continue && data.continue.accontinue;
+
+      return { 
+        categories, 
+        hasMore: !!hasMore,
+        nextOffset: hasMore ? data.continue.accontinue : null
+      };
     } catch (error) {
       console.error('Error fetching categories:', error.message);
-      return [];
+      return { categories: [], hasMore: false };
     }
   }
 
-  // Get categories for a specific anime from the questions database
-  async getCategoriesForAnime(animeName) {
-    const { getDb } = require('../config/firebase');
-    const db = getDb();
-    
+  // Search categories with better filtering
+  async searchCategories(fandomWikiName, searchTerm, limit = 100) {
+    if (!searchTerm || searchTerm.length < 2) {
+      return { categories: [], hasMore: false };
+    }
+
     try {
-      const snapshot = await db.collection('questions')
-        .where('animeName', '==', animeName)
-        .get();
+      // First try with prefix search (more efficient)
+      let result = await this.getAvailableCategories(fandomWikiName, searchTerm, limit);
       
-      const categories = new Set();
+      // If we don't have enough results, do a broader search
+      if (result.categories.length < 20 && searchTerm.length >= 3) {
+        const broadResult = await this.getAvailableCategories(fandomWikiName, '', 500);
+        const filteredCategories = broadResult.categories
+          .filter(cat => cat.toLowerCase().includes(searchTerm.toLowerCase()))
+          .slice(0, limit);
+        
+        result = {
+          categories: filteredCategories,
+          hasMore: false
+        };
+      }
+
+      return result;
+    } catch (error) {
+      console.error('Error searching categories:', error.message);
+      return { categories: [], hasMore: false };
+    }
+  }
+
+  // Get processing statistics for a fandom
+  async getProcessingStats(fandomName) {
+    try {
+      const db = getDb();
+      const snapshot = await db.collection('processedChunks')
+        .where('fandomName', '==', fandomName)
+        .get();
+
+      const stats = {
+        totalChunks: snapshot.size,
+        byCategory: {},
+        byPage: {},
+        lastProcessed: null
+      };
+
       snapshot.docs.forEach(doc => {
         const data = doc.data();
+        
+        // Count by category
         if (data.category) {
-          categories.add(data.category);
+          stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
+        }
+        
+        // Count by page
+        if (data.pageTitle) {
+          stats.byPage[data.pageTitle] = (stats.byPage[data.pageTitle] || 0) + 1;
+        }
+
+        // Track last processed
+        if (data.processedAt && (!stats.lastProcessed || data.processedAt.toDate() > stats.lastProcessed)) {
+          stats.lastProcessed = data.processedAt.toDate();
         }
       });
-      
-      return Array.from(categories).sort();
+
+      return stats;
     } catch (error) {
-      console.error('Error fetching categories for anime:', error.message);
-      return [];
+      console.error('Error fetching processing stats:', error.message);
+      return { totalChunks: 0, byCategory: {}, byPage: {}, lastProcessed: null };
+    }
+  }
+
+  // Clean up old processed chunks (optional maintenance function)
+  async cleanupOldChunks(olderThanDays = 30) {
+    try {
+      const db = getDb();
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
+
+      const snapshot = await db.collection('processedChunks')
+        .where('processedAt', '<', cutoffDate)
+        .get();
+
+      if (snapshot.empty) {
+        console.log('No old chunks to clean up');
+        return 0;
+      }
+
+      const batch = db.batch();
+      snapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+
+      await batch.commit();
+      console.log(`Cleaned up ${snapshot.size} old processed chunks`);
+      return snapshot.size;
+    } catch (error) {
+      console.error('Error cleaning up old chunks:', error.message);
+      return 0;
     }
   }
 }

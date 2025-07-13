@@ -1,14 +1,18 @@
 {
   "name": "questionsgen-server",
-  "version": "1.0.0",
-  "description": "Server for the QuestionsGen application",
+  "version": "2.0.0",
+  "description": "Server for the QuestionsGen application - Enhanced with persistent processing",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
     "server": "nodemon server/index.js",
     "client": "npm start --prefix client",
     "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "heroku-postbuild": "NPM_CONFIG_PRODUCTION=false npm install --prefix client && npm run build --prefix client"
+    "heroku-postbuild": "NPM_CONFIG_PRODUCTION=false npm install --prefix client && npm run build --prefix client",
+    "db:stats": "node server/utils/databaseUtils.js stats",
+    "db:cleanup": "node server/utils/databaseUtils.js cleanup",
+    "db:duplicates": "node server/utils/databaseUtils.js duplicates",
+    "db:export": "node server/utils/databaseUtils.js export"
   },
   "dependencies": {
     "axios": "^1.7.2",
