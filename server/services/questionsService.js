@@ -2,6 +2,7 @@
 const { z } = require('zod');
 const openaiService = require('./openaiService.js');
 const { getDb } = require('../config/firebase');
+const admin = require('firebase-admin'); // FIX: This line was missing
 
 const QuestionsSchema = z.array(
   z.object({

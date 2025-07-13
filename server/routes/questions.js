@@ -1,8 +1,9 @@
 // server/routes/questions.js
 const express = require('express');
 const router = express.Router();
-const questionService = require('../services/questionService');
+const questionService = require('../services/questionsService');
 const { getDb } = require('../config/firebase');
+const admin = require('firebase-admin');
 
 router.get('/', async (req, res) => {
   try {

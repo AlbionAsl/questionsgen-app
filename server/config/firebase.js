@@ -4,26 +4,35 @@ const path = require('path');
 
 let db;
 
-const initializeFirebase = () => {
-  if (!admin.apps.length) {
-    const serviceAccountPath = path.join(__dirname, '../../serviceAccount.json');
+function initializeFirebase() {
+    // Correctly resolve the path to the service account key
+    const serviceAccountPath = path.resolve(__dirname, 'serviceAccount.json');
     
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccountPath),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
-    });
-    
-    db = admin.firestore();
-  }
-  
-  return db;
-};
+    // Check if the app is already initialized
+    if (admin.apps.length === 0) {
+        try {
+            const serviceAccount = require(serviceAccountPath);
+            admin.initializeApp({
+                credential: admin.credential.cert(serviceAccount)
+            });
+            db = admin.firestore();
+        } catch (error) {
+            console.error("Failed to load Firebase service account key. Make sure 'serviceAccount.json' is in the 'server/config' directory.", error);
+            // Re-throw the error to be caught by the caller in index.js
+            throw error;
+        }
+    }
+}
 
-module.exports = {
-  getDb: () => {
+function getDb() {
     if (!db) {
-      db = initializeFirebase();
+        throw new Error('Firebase has not been initialized. Call initializeFirebase first.');
     }
     return db;
-  }
+}
+
+// --- FIX: Correctly export the functions ---
+module.exports = {
+    initializeFirebase,
+    getDb
 };
