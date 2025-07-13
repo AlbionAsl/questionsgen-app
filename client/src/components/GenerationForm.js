@@ -9,7 +9,11 @@ export default function GenerationForm({ onStart }) {
     categories: [],
     individualPages: [],
     maxApiCalls: 10,
-    questionsPerChunk: 4
+    questionsPerChunk: 4,
+    // NEW: OpenAI model selection
+    openaiModel: 'gpt-4o-mini',
+    // NEW: Custom prompt instructions
+    promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
   });
 
   const [animeSearchResults, setAnimeSearchResults] = useState([]);
@@ -19,6 +23,38 @@ export default function GenerationForm({ onStart }) {
   const [searchingAnime, setSearchingAnime] = useState(false);
   const [loadingCategories, setLoadingCategories] = useState(false);
   const [newPageInput, setNewPageInput] = useState('');
+
+  // Available OpenAI models
+  const openaiModels = [
+    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cost-effective)', description: 'Best for most use cases' },
+    { value: 'gpt-4.1', label: 'GPT-4.1', description: 'Higher quality, slower' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1.mini', description: 'Faster 4.1' },
+    { value: 'o4-mini', label: 'o4-mini', description: 'Reasoning monster' }
+  ];
+
+  // Prompt presets for different question styles
+  const promptPresets = [
+    {
+      name: 'Challenging & Specific (Default)',
+      value: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
+    },
+    {
+      name: 'Trivia Style',
+      value: 'Generate trivia-style questions with one correct answer and three plausible incorrect options. Focus on memorable details, character names, abilities, and plot points. Make the questions engaging for anime fans.'
+    },
+    {
+      name: 'Character Focused',
+      value: 'Create questions that focus on character details, relationships, abilities, and development. Include specific character names and traits. Make incorrect options believable but clearly wrong.'
+    },
+    {
+      name: 'Plot & Events',
+      value: 'Generate questions about plot events, story arcs, battles, and key moments. Focus on what happened, when, and why. Include specific details about locations and circumstances.'
+    },
+    {
+      name: 'Technical Details',
+      value: 'Create detailed questions about abilities, techniques, power systems, and world-building elements. Focus on specific mechanics and technical aspects of the anime universe.'
+    }
+  ];
 
   // Common anime presets
   const animePresets = [
@@ -117,8 +153,15 @@ export default function GenerationForm({ onStart }) {
     }
   };
 
+  const handlePromptPresetSelect = (preset) => {
+    setFormData(prev => ({
+      ...prev,
+      promptInstructions: preset.value
+    }));
+  };
+
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-4xl mx-auto">
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Generate New Questions</h2>
 
@@ -159,7 +202,7 @@ export default function GenerationForm({ onStart }) {
                       animeName: preset.name,
                       fandomWikiName: preset.wiki
                     })}
-                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full"
+                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full transition-colors"
                   >
                     {preset.name}
                   </button>
@@ -251,7 +294,7 @@ export default function GenerationForm({ onStart }) {
               />
               <button
                 onClick={handleIndividualPageAdd}
-                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition-colors"
               >
                 Add
               </button>
@@ -279,9 +322,72 @@ export default function GenerationForm({ onStart }) {
             )}
           </div>
 
+          {/* AI Configuration Section */}
+          <div className="border-t pt-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">🤖 AI Configuration</h3>
+            
+            {/* OpenAI Model Selection */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">OpenAI Model</label>
+              <div className="space-y-2">
+                {openaiModels.map((model) => (
+                  <label key={model.value} className="flex items-start">
+                    <input
+                      type="radio"
+                      checked={formData.openaiModel === model.value}
+                      onChange={() => setFormData({ ...formData, openaiModel: model.value })}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 mt-1"
+                    />
+                    <div className="ml-3">
+                      <span className="text-sm font-medium text-gray-700">{model.label}</span>
+                      <p className="text-xs text-gray-500">{model.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Prompt Instructions */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Question Generation Instructions</label>
+              
+              {/* Prompt Presets */}
+              <div className="mb-3">
+                <p className="text-xs text-gray-500 mb-2">Quick presets:</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {promptPresets.map((preset) => (
+                    <button
+                      key={preset.name}
+                      onClick={() => handlePromptPresetSelect(preset)}
+                      className={`p-2 text-xs border rounded-md text-left transition-colors ${
+                        formData.promptInstructions === preset.value
+                          ? 'bg-blue-50 border-blue-200 text-blue-700'
+                          : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+                      }`}
+                    >
+                      {preset.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Prompt Textarea */}
+              <textarea
+                value={formData.promptInstructions}
+                onChange={(e) => setFormData({ ...formData, promptInstructions: e.target.value })}
+                rows={4}
+                className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+                placeholder="Describe how you want the AI to generate questions..."
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Customize how the AI should generate questions. This affects question style, difficulty, and focus areas.
+              </p>
+            </div>
+          </div>
+
           {/* Advanced Settings */}
           <div className="border-t pt-6">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">Advanced Settings</h3>
+            <h3 className="text-lg font-medium text-gray-900 mb-4">⚙️ Advanced Settings</h3>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Max API Calls</label>
@@ -316,7 +422,7 @@ export default function GenerationForm({ onStart }) {
               onClick={handleSubmit}
               disabled={loading || !formData.animeName || !formData.fandomWikiName}
               className={`
-                w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white
+                w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white transition-colors
                 ${loading || !formData.animeName || !formData.fandomWikiName
                   ? 'bg-gray-400 cursor-not-allowed'
                   : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'

@@ -1,8 +1,8 @@
-// server/services/questionService.js
+// server/services/questionsService.js
 const { z } = require('zod');
 const openaiService = require('./openaiService.js');
 const { getDb } = require('../config/firebase');
-const admin = require('firebase-admin'); // FIX: This line was missing
+const admin = require('firebase-admin');
 
 const QuestionsSchema = z.array(
   z.object({
@@ -13,9 +13,28 @@ const QuestionsSchema = z.array(
 );
 
 class QuestionService {
-  async generateQuestions(chunk, amountOfQuestions, animeName, category, pageTitle) {
+  async generateQuestions(chunk, amountOfQuestions, animeName, category, pageTitle, options = {}) {
+    const startTime = Date.now();
+    console.log(`[Questions] Starting generation for ${amountOfQuestions} questions`);
+    console.log(`[Questions] Using model: ${options.model || 'gpt-4o-mini'}`);
+    console.log(`[Questions] Chunk length: ${chunk.length} characters`);
+    
+    // Validate input
+    if (!chunk || chunk.trim().length === 0) {
+      throw new Error('Cannot generate questions from empty content');
+    }
+    
+    if (chunk.length > 15000) {
+      console.warn(`[Questions] Chunk is very large (${chunk.length} chars), truncating to 15000`);
+      chunk = chunk.substring(0, 15000);
+    }
+
+    // Use custom prompt instructions or default
+    const defaultInstructions = 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.';
+    const promptInstructions = options.promptInstructions || defaultInstructions;
+
     const prompt = `
-Generate ${amountOfQuestions} multiple-choice questions based on the following text. Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.
+Generate ${amountOfQuestions} multiple-choice questions based on the following text. ${promptInstructions}
 
 Text:
 For reference, this piece of text is about the Anime: ${animeName} ${
@@ -55,7 +74,10 @@ ${chunk}
     ];
 
     try {
+      console.log(`[Questions] Making OpenAI API call...`);
+      
       const response = await openaiService.createCompletion({
+        model: options.model || 'gpt-4o-mini', // Use custom model
         messages: [
           {
             role: 'system',
@@ -69,53 +91,97 @@ ${chunk}
         temperature: 0.7,
       });
 
+      const duration = Date.now() - startTime;
+      console.log(`[Questions] OpenAI response received in ${duration}ms`);
+
       const message = response.choices[0].message;
 
       if (message.function_call && message.function_call.name === 'generate_questions') {
-        const args = JSON.parse(message.function_call.arguments);
-        const parsedData = QuestionsSchema.parse(args.questions);
-        return parsedData;
+        try {
+          const args = JSON.parse(message.function_call.arguments);
+          console.log(`[Questions] Parsing response... found ${args.questions?.length || 0} questions`);
+          
+          const parsedData = QuestionsSchema.parse(args.questions);
+          console.log(`[Questions] Successfully validated ${parsedData.length} questions`);
+          
+          return parsedData;
+        } catch (parseError) {
+          console.error('[Questions] Error parsing OpenAI response:', parseError.message);
+          console.error('[Questions] Raw response:', message.function_call.arguments);
+          throw new Error(`Failed to parse OpenAI response: ${parseError.message}`);
+        }
       } else {
-        console.error('Assistant did not call the expected function.');
-        return [];
+        console.error('[Questions] OpenAI did not call the expected function');
+        console.error('[Questions] Response:', JSON.stringify(message, null, 2));
+        throw new Error('OpenAI did not call the expected function');
       }
+      
     } catch (error) {
-      console.error('Error generating questions:', error.message);
-      throw error;
+      const duration = Date.now() - startTime;
+      console.error(`[Questions] Generation failed after ${duration}ms:`, error.message);
+      
+      // Don't re-throw timeout errors, let the caller handle them
+      if (error.message.includes('timeout') || error.message.includes('timed out')) {
+        throw new Error(`Question generation timed out after ${duration}ms`);
+      }
+      
+      // For other errors, provide more context
+      throw new Error(`Question generation failed: ${error.message}`);
     }
   }
 
   async writeQuestionsToFirestore(questions, animeId, metadata = {}) {
+    const startTime = Date.now();
+    console.log(`[Questions] Writing ${questions.length} questions to Firestore...`);
+    
+    if (!questions || questions.length === 0) {
+      console.warn('[Questions] No questions to write');
+      return 0;
+    }
+
     const db = getDb();
     const batch = db.batch();
 
-    questions.forEach((q) => {
-      const docRef = db.collection('questions').doc();
-      batch.set(docRef, {
-        id: docRef.id,
-        animeId: animeId,
-        animeName: metadata.animeName || '',
-        category: metadata.category || '',
-        pageTitle: metadata.pageTitle || '',
-        question: q.question,
-        options: q.options,
-        correctAnswer: q.correctAnswer,
-        difficulty: 0, // easy
-        dislikes: 0,
-        likes: 0,
-        totalAnswers: 0,
-        correctAnswers: 0,
-        random: Math.random(),
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
+    questions.forEach((q, index) => {
+      try {
+        const docRef = db.collection('questions').doc();
+        batch.set(docRef, {
+          id: docRef.id,
+          animeId: animeId,
+          animeName: metadata.animeName || '',
+          category: metadata.category || '',
+          pageTitle: metadata.pageTitle || '',
+          question: q.question,
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          // NEW: Store generation metadata
+          generationMetadata: {
+            model: metadata.model || 'gpt-4o-mini',
+            promptInstructions: metadata.promptInstructions || 'default',
+            generatedAt: new Date().toISOString()
+          },
+          difficulty: 0, // easy
+          dislikes: 0,
+          likes: 0,
+          totalAnswers: 0,
+          correctAnswers: 0,
+          random: Math.random(),
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } catch (error) {
+        console.error(`[Questions] Error preparing question ${index + 1}:`, error.message);
+        throw error;
+      }
     });
 
     try {
       await batch.commit();
+      const duration = Date.now() - startTime;
+      console.log(`[Questions] Successfully wrote ${questions.length} questions in ${duration}ms`);
       return questions.length;
     } catch (error) {
-      console.error('Error writing questions to Firestore:', error.message);
-      throw error;
+      console.error('[Questions] Error writing to Firestore:', error.message);
+      throw new Error(`Failed to write questions to database: ${error.message}`);
     }
   }
 
@@ -162,6 +228,7 @@ ${chunk}
         total: snapshot.size,
         byAnime: {},
         byCategory: {},
+        byModel: {}, // NEW: Stats by AI model used
         recentQuestions: []
       };
 
@@ -177,6 +244,10 @@ ${chunk}
         if (data.category) {
           stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
         }
+
+        // Count by AI model
+        const model = data.generationMetadata?.model || 'unknown';
+        stats.byModel[model] = (stats.byModel[model] || 0) + 1;
       });
 
       // Get recent questions

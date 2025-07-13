@@ -1,13 +1,12 @@
 // server/services/scrapingService.js
 const axios = require('axios');
 const cheerio = require('cheerio');
-const fs = require('fs').promises;
-const path = require('path');
 const crypto = require('crypto');
 
 class ScrapingService {
   constructor() {
-    this.chunksDir = path.join(__dirname, '../../chunks');
+    // In-memory storage for metadata
+    this.metadataStore = new Map();
   }
 
   createFandomUrl(topic) {
@@ -136,52 +135,45 @@ class ScrapingService {
     return chunks;
   }
 
-  async saveChunk(chunk, category, pageTitle, chunkNumber, fandomName) {
-    const chunksDir = path.join(this.chunksDir, fandomName);
-    await fs.mkdir(chunksDir, { recursive: true });
+  // Generate a unique identifier for a chunk
+  generateChunkId(category, pageTitle, chunkNumber, fandomName) {
+    const data = `${fandomName}_${category}_${pageTitle}_${chunkNumber}`;
+    return crypto.createHash('md5').update(data).digest('hex');
+  }
 
-    let cleanTitle = pageTitle.replace(/[^\w\-_\. ]/g, '_');
-    let filename = category
-      ? `${category}_${cleanTitle}_${chunkNumber}.txt`
-      : `${cleanTitle}_${chunkNumber}.txt`;
+  // Check if chunk was already processed
+  isChunkProcessed(chunkId, fandomName) {
+    const metadata = this.getMetadata(fandomName);
+    return metadata[chunkId]?.questionsGenerated === true;
+  }
 
-    if (filename.length > 255) {
-      const hash = crypto.createHash('md5').update(filename).digest('hex');
-      filename = `${hash}_${chunkNumber}.txt`;
+  // Mark chunk as processed
+  markChunkAsProcessed(chunkId, fandomName) {
+    const metadata = this.getMetadata(fandomName);
+    metadata[chunkId] = { questionsGenerated: true };
+  }
+
+  // Get metadata for a fandom
+  getMetadata(fandomName) {
+    if (!this.metadataStore.has(fandomName)) {
+      this.metadataStore.set(fandomName, {});
     }
-
-    const filepath = path.join(chunksDir, filename);
-    await fs.writeFile(filepath, chunk);
-    
-    return filename;
+    return this.metadataStore.get(fandomName);
   }
 
-  async loadChunkMetadata(fandomName) {
-    const metadataPath = path.join(this.chunksDir, fandomName, 'metadata.json');
-    try {
-      const data = await fs.readFile(metadataPath, 'utf-8');
-      return JSON.parse(data);
-    } catch (error) {
-      if (error.code === 'ENOENT') {
-        return {};
-      }
-      throw error;
-    }
-  }
-
-  async saveChunkMetadata(fandomName, metadata) {
-    const metadataPath = path.join(this.chunksDir, fandomName, 'metadata.json');
-    await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
-  }
-
-  async getAvailableCategories(fandomWikiName) {
+  async getAvailableCategories(fandomWikiName, searchTerm = '', limit = 500) {
     const url = this.createFandomUrl(fandomWikiName);
     const params = {
       action: 'query',
       list: 'allcategories',
-      aclimit: '100',
+      aclimit: limit.toString(),
       format: 'json',
     };
+
+    // Add search prefix if provided
+    if (searchTerm) {
+      params.acprefix = searchTerm;
+    }
 
     try {
       const response = await axios.get(url, { params });
@@ -191,12 +183,47 @@ class ScrapingService {
         return [];
       }
 
-      // Filter out system categories
+      // Filter out system categories and apply additional search if needed
       return data.query.allcategories
         .map(cat => cat['*'])
-        .filter(cat => !cat.includes('Hidden') && !cat.includes('Maintenance'));
+        .filter(cat => {
+          // Filter out system categories
+          if (cat.includes('Hidden') || cat.includes('Maintenance') || cat.includes('Templates')) {
+            return false;
+          }
+          // Additional search filter if searchTerm exists
+          if (searchTerm && !cat.toLowerCase().includes(searchTerm.toLowerCase())) {
+            return false;
+          }
+          return true;
+        });
     } catch (error) {
       console.error('Error fetching categories:', error.message);
+      return [];
+    }
+  }
+
+  // Get categories for a specific anime from the questions database
+  async getCategoriesForAnime(animeName) {
+    const { getDb } = require('../config/firebase');
+    const db = getDb();
+    
+    try {
+      const snapshot = await db.collection('questions')
+        .where('animeName', '==', animeName)
+        .get();
+      
+      const categories = new Set();
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        if (data.category) {
+          categories.add(data.category);
+        }
+      });
+      
+      return Array.from(categories).sort();
+    } catch (error) {
+      console.error('Error fetching categories for anime:', error.message);
       return [];
     }
   }

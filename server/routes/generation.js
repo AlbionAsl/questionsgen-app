@@ -61,8 +61,6 @@ router.post('/start', async (req, res) => {
   }
 });
 
-// ... (other routes remain the same) ...
-
 router.get('/status/:processId', (req, res) => {
   const { processId } = req.params;
   const process = activeProcesses.get(processId);
@@ -105,14 +103,21 @@ router.get('/anime/search/:term', async (req, res) => {
 
 router.get('/wiki/:wikiName/categories', async (req, res) => {
   try {
-    const categories = await scrapingService.getAvailableCategories(req.params.wikiName);
+    const { search, limit } = req.query;
+    const categories = await scrapingService.getAvailableCategories(
+      req.params.wikiName, 
+      search || '', 
+      parseInt(limit) || 500
+    );
     res.json(categories);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// --- Main Generation Logic ---
+
+
+// Main Generation Logic
 async function generateQuestions(
   processId,
   animeName,
@@ -137,8 +142,6 @@ async function generateQuestions(
     if (!animeData) throw new Error(`Could not find AniList ID for ${animeName}`);
     process.animeId = animeData.id;
     log(`Found anime: ${animeData.title.romaji} (ID: ${animeData.id})`, 'success');
-
-    const metadata = await scrapingService.loadChunkMetadata(fandomWikiName);
 
     const pagesToProcess = [];
     if (categories && categories.length > 0) {
@@ -183,31 +186,43 @@ async function generateQuestions(
           break;
         }
         
-        const chunkFilename = await scrapingService.saveChunk(chunks[i], page.category, page.title, i + 1, fandomWikiName);
+        const chunkId = scrapingService.generateChunkId(page.category, page.title, i + 1, fandomWikiName);
 
-        if (!metadata[chunkFilename]?.questionsGenerated) {
+        if (!scrapingService.isChunkProcessed(chunkId, fandomWikiName)) {
           log(`Generating questions for chunk ${i + 1}/${chunks.length}...`);
-          const questions = await questionsService.generateQuestions(chunks[i], questionsPerChunk, animeName, page.category, page.title);
+          const questions = await questionsService.generateQuestions(
+            chunks[i], 
+            questionsPerChunk, 
+            animeName, 
+            page.category, 
+            page.title
+          );
 
           if (questions && questions.length > 0) {
-            const count = await questionsService.writeQuestionsToFirestore(questions, process.animeId, { animeName, category: page.category, pageTitle: page.title });
+            const count = await questionsService.writeQuestionsToFirestore(
+              questions, 
+              process.animeId, 
+              { animeName, category: page.category, pageTitle: page.title }
+            );
             process.questionsGenerated += count;
             log(`Generated ${count} questions.`, 'success');
             emit('questionsGenerated', { count, total: process.questionsGenerated });
           }
+          
           process.apiCallsMade++;
-          metadata[chunkFilename] = { questionsGenerated: true };
-          await scrapingService.saveChunkMetadata(fandomWikiName, metadata);
+          scrapingService.markChunkAsProcessed(chunkId, fandomWikiName);
         } else {
           log(`Skipping chunk ${i + 1}/${chunks.length} (already processed).`);
         }
       }
+      
       workDone++;
       process.progress = Math.round((workDone / totalWork) * 100);
       emit('progress', process.progress);
     }
 
     process.status = 'completed';
+    process.duration = Date.now() - new Date(process.startTime).getTime();
     log(`Generation completed! Generated a total of ${process.questionsGenerated} questions.`, 'success');
     emit('completed', process);
 
