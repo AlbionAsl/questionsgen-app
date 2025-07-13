@@ -1,0 +1,337 @@
+import React, { useState, useEffect } from 'react';
+
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
+export default function GenerationForm({ onStart }) {
+  const [formData, setFormData] = useState({
+    animeName: '',
+    fandomWikiName: '',
+    categories: [],
+    individualPages: [],
+    maxApiCalls: 10,
+    questionsPerChunk: 4
+  });
+
+  const [animeSearchResults, setAnimeSearchResults] = useState([]);
+  const [availableCategories, setAvailableCategories] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [searchingAnime, setSearchingAnime] = useState(false);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [newPageInput, setNewPageInput] = useState('');
+
+  // Common anime presets
+  const animePresets = [
+    { name: 'One Piece', wiki: 'onepiece' },
+    { name: 'Naruto', wiki: 'naruto' },
+    { name: 'Attack on Titan', wiki: 'attackontitan' },
+    { name: 'My Hero Academia', wiki: 'myheroacademia' },
+    { name: 'Demon Slayer', wiki: 'kimetsu-no-yaiba' },
+    { name: 'Jujutsu Kaisen', wiki: 'jujutsu-kaisen' }
+  ];
+
+  useEffect(() => {
+    if (formData.animeName.length > 2) {
+      const timer = setTimeout(() => searchAnime(formData.animeName), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [formData.animeName]);
+
+  useEffect(() => {
+    if (formData.fandomWikiName) {
+      fetchCategories(formData.fandomWikiName);
+    }
+  }, [formData.fandomWikiName]);
+
+  const searchAnime = async (term) => {
+    setSearchingAnime(true);
+    try {
+      const response = await fetch(`${API_URL}/api/generation/anime/search/${encodeURIComponent(term)}`);
+      const data = await response.json();
+      setAnimeSearchResults(data);
+    } catch (error) {
+      console.error('Error searching anime:', error);
+    } finally {
+      setSearchingAnime(false);
+    }
+  };
+
+  const fetchCategories = async (wikiName) => {
+    setLoadingCategories(true);
+    try {
+      const response = await fetch(`${API_URL}/api/generation/wiki/${wikiName}/categories`);
+      const data = await response.json();
+      setAvailableCategories(data);
+    } catch (error) {
+      console.error('Error fetching categories:', error);
+    } finally {
+      setLoadingCategories(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.animeName || !formData.fandomWikiName) return;
+    
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`${API_URL}/api/generation/start`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(formData),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to start generation');
+      }
+
+      onStart(data.processId);
+    } catch (error) {
+      setError(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCategoryToggle = (category) => {
+    setFormData(prev => ({
+      ...prev,
+      categories: prev.categories.includes(category)
+        ? prev.categories.filter(c => c !== category)
+        : [...prev.categories, category]
+    }));
+  };
+
+  const handleIndividualPageAdd = () => {
+    if (newPageInput && !formData.individualPages.includes(newPageInput)) {
+      setFormData(prev => ({
+        ...prev,
+        individualPages: [...prev.individualPages, newPageInput]
+      }));
+      setNewPageInput('');
+    }
+  };
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="bg-white shadow rounded-lg p-6">
+        <h2 className="text-2xl font-bold text-gray-900 mb-6">Generate New Questions</h2>
+
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-sm text-red-600">{error}</p>
+          </div>
+        )}
+
+        <div className="space-y-6">
+          {/* Anime Selection */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Anime Name</label>
+            <div className="mt-1 relative">
+              <input
+                type="text"
+                value={formData.animeName}
+                onChange={(e) => setFormData({ ...formData, animeName: e.target.value })}
+                className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+                placeholder="Search for an anime..."
+              />
+              {searchingAnime && (
+                <div className="absolute right-2 top-2">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                </div>
+              )}
+            </div>
+
+            {/* Anime Presets */}
+            <div className="mt-2">
+              <p className="text-xs text-gray-500 mb-1">Quick select:</p>
+              <div className="flex flex-wrap gap-2">
+                {animePresets.map((preset) => (
+                  <button
+                    key={preset.name}
+                    onClick={() => setFormData({
+                      ...formData,
+                      animeName: preset.name,
+                      fandomWikiName: preset.wiki
+                    })}
+                    className="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded-full"
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Search Results */}
+            {animeSearchResults.length > 0 && (
+              <div className="mt-2 border border-gray-200 rounded-md shadow-sm max-h-48 overflow-y-auto">
+                {animeSearchResults.map((anime) => (
+                  <button
+                    key={anime.id}
+                    onClick={() => setFormData({ ...formData, animeName: anime.title.romaji || anime.title.english })}
+                    className="w-full text-left px-4 py-2 hover:bg-gray-50 flex items-center space-x-3"
+                  >
+                    {anime.coverImage && (
+                      <img src={anime.coverImage.medium} alt="" className="w-10 h-14 object-cover rounded" />
+                    )}
+                    <div>
+                      <div className="font-medium">{anime.title.romaji}</div>
+                      {anime.title.english && (
+                        <div className="text-sm text-gray-500">{anime.title.english}</div>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Fandom Wiki Name */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Fandom Wiki Name</label>
+            <input
+              type="text"
+              value={formData.fandomWikiName}
+              onChange={(e) => setFormData({ ...formData, fandomWikiName: e.target.value })}
+              className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+              placeholder="e.g., onepiece, naruto, attackontitan"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              The subdomain of the Fandom wiki (e.g., for https://naruto.fandom.com, enter "naruto")
+            </p>
+          </div>
+
+          {/* Categories */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Categories</label>
+            {loadingCategories ? (
+              <div className="flex items-center justify-center py-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+              </div>
+            ) : availableCategories.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-md p-3">
+                {availableCategories.map((category) => (
+                  <label key={category} className="flex items-center">
+                    <input
+                      type="checkbox"
+                      checked={formData.categories.includes(category)}
+                      onChange={() => handleCategoryToggle(category)}
+                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">{category}</span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">Enter a wiki name to load categories</p>
+            )}
+          </div>
+
+          {/* Individual Pages */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700">Individual Pages (Optional)</label>
+            <div className="mt-1 flex gap-2">
+              <input
+                type="text"
+                value={newPageInput}
+                onChange={(e) => setNewPageInput(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleIndividualPageAdd();
+                  }
+                }}
+                placeholder="Add specific page titles..."
+                className="shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+              />
+              <button
+                onClick={handleIndividualPageAdd}
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm"
+              >
+                Add
+              </button>
+            </div>
+            {formData.individualPages.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {formData.individualPages.map((page, index) => (
+                  <span
+                    key={index}
+                    className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800"
+                  >
+                    {page}
+                    <button
+                      onClick={() => setFormData(prev => ({
+                        ...prev,
+                        individualPages: prev.individualPages.filter((_, i) => i !== index)
+                      }))}
+                      className="ml-2 text-blue-600 hover:text-blue-800"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Advanced Settings */}
+          <div className="border-t pt-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Advanced Settings</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Max API Calls</label>
+                <input
+                  type="number"
+                  value={formData.maxApiCalls}
+                  onChange={(e) => setFormData({ ...formData, maxApiCalls: parseInt(e.target.value) })}
+                  min="1"
+                  max="100"
+                  className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-gray-500">Limits OpenAI API usage</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Questions per Chunk</label>
+                <input
+                  type="number"
+                  value={formData.questionsPerChunk}
+                  onChange={(e) => setFormData({ ...formData, questionsPerChunk: parseInt(e.target.value) })}
+                  min="1"
+                  max="10"
+                  className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-gray-500">Questions generated per text chunk</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <div>
+            <button
+              onClick={handleSubmit}
+              disabled={loading || !formData.animeName || !formData.fandomWikiName}
+              className={`
+                w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white
+                ${loading || !formData.animeName || !formData.fandomWikiName
+                  ? 'bg-gray-400 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                }
+              `}
+            >
+              {loading ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              ) : (
+                'Start Generation'
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
