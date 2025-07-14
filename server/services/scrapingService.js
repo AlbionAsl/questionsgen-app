@@ -261,6 +261,183 @@ class ScrapingService {
     }
   }
 
+  // NEW: Get popular pages from Special:MostRevisions
+  async getPopularPages(fandomWikiName, limit = 100) {
+    console.log(`[PopularPages] Fetching popular pages for ${fandomWikiName}...`);
+    
+    try {
+      // Go directly to scraping the Special:MostRevisions page as it's more reliable
+      return await this.getPopularPagesViaScraping(fandomWikiName, limit);
+      
+    } catch (error) {
+      console.error('[PopularPages] Error fetching popular pages:', error.message);
+      throw new Error(`Failed to fetch popular pages: ${error.message}`);
+    }
+  }
+
+  // Scrape the Special:MostRevisions page directly
+  async getPopularPagesViaScraping(fandomWikiName, limit = 100) {
+    console.log(`[PopularPages] Scraping Special:MostRevisions page...`);
+    
+    const url = `https://${fandomWikiName}.fandom.com/wiki/Special:MostRevisions`;
+    const params = {
+      limit: Math.min(limit, 500),
+      offset: 0
+    };
+
+    try {
+      const response = await axios.get(url, { params });
+      const $ = cheerio.load(response.data);
+      
+      const pages = [];
+      
+      console.log(`[PopularPages] Page loaded, looking for revision data...`);
+      
+      // Look for the ordered list that contains the most revisions
+      // The structure is usually: <ol><li>1. <a href="/wiki/PageName">Page Name</a> ‎ (X revisions)</li></ol>
+      const possibleSelectors = [
+        'ol li',  // Most likely structure
+        '.mw-content-text ol li',
+        '.mw-parser-output ol li',
+        'ul li',  // Fallback to unordered list
+        '.mw-content-text ul li'
+      ];
+
+      let foundPages = false;
+      
+      for (const selector of possibleSelectors) {
+        const items = $(selector);
+        console.log(`[PopularPages] Trying selector "${selector}" - found ${items.length} items`);
+        
+        if (items.length > 0) {
+          items.each((index, element) => {
+            if (pages.length >= limit) return;
+            
+            const $item = $(element);
+            const fullText = $item.text().trim();
+            console.log(`[PopularPages] Processing item ${index + 1}: "${fullText}"`);
+            
+            // Look for the link within the item
+            const link = $item.find('a').first();
+            
+            if (link.length > 0) {
+              const title = link.text().trim();
+              const href = link.attr('href');
+              
+              // Extract revision count from the full text
+              // Look for patterns like "(12,338 revisions)" or "(12338 revisions)"
+              const revisionPatterns = [
+                /\(([0-9,]+)\s+revisions?\)/i,
+                /\(([0-9,]+)\s+revision\)/i,
+                /‎\s*\(([0-9,]+)\s+revisions?\)/i,
+                /\s+\(([0-9,]+)\s+revisions?\)/i
+              ];
+              
+              let revisions = 0;
+              for (const pattern of revisionPatterns) {
+                const match = fullText.match(pattern);
+                if (match) {
+                  // Remove commas and parse as integer
+                  revisions = parseInt(match[1].replace(/,/g, ''));
+                  console.log(`[PopularPages] Found revisions: ${revisions} for page: ${title}`);
+                  break;
+                }
+              }
+              
+              // Filter out system pages and ensure it's a content page
+              if (title && 
+                  href && 
+                  href.includes('/wiki/') &&
+                  !title.includes(':') && 
+                  !title.startsWith('Category:') &&
+                  !title.startsWith('Template:') &&
+                  !title.startsWith('File:') &&
+                  !title.startsWith('User:') &&
+                  !title.startsWith('Special:') &&
+                  !title.startsWith('MediaWiki:') &&
+                  title.length > 2 &&
+                  revisions > 0) {  // Only include pages with actual revision counts
+                
+                pages.push({
+                  title: title,
+                  revisions: revisions,
+                  url: href
+                });
+                foundPages = true;
+                console.log(`[PopularPages] Added page: ${title} (${revisions} revisions)`);
+              }
+            }
+          });
+          
+          if (foundPages && pages.length > 0) {
+            console.log(`[PopularPages] Successfully found ${pages.length} pages with selector "${selector}"`);
+            break;
+          }
+        }
+      }
+
+      // If we still haven't found pages, try a more direct approach
+      if (!foundPages || pages.length === 0) {
+        console.log(`[PopularPages] Standard selectors failed, trying direct text parsing...`);
+        
+        // Look for text patterns that match the revision format directly
+        const bodyText = $('body').text();
+        const lines = bodyText.split('\n');
+        
+        for (const line of lines) {
+          if (pages.length >= limit) break;
+          
+          // Look for lines that contain revision information
+          const revisionMatch = line.match(/(\d+)\.\s*(.+?)\s*\(([0-9,]+)\s+revisions?\)/i);
+          if (revisionMatch) {
+            const title = revisionMatch[2].trim();
+            const revisions = parseInt(revisionMatch[3].replace(/,/g, ''));
+            
+            if (title && 
+                !title.includes(':') && 
+                !title.startsWith('Category:') &&
+                !title.startsWith('Template:') &&
+                !title.startsWith('File:') &&
+                !title.startsWith('User:') &&
+                title.length > 2 &&
+                revisions > 0) {
+              
+              pages.push({
+                title: title,
+                revisions: revisions,
+                url: `/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`
+              });
+              foundPages = true;
+              console.log(`[PopularPages] Direct parsing found: ${title} (${revisions} revisions)`);
+            }
+          }
+        }
+      }
+
+      // Sort by revision count (highest first)
+      pages.sort((a, b) => b.revisions - a.revisions);
+
+      console.log(`[PopularPages] Final result: ${pages.length} pages`);
+      if (pages.length > 0) {
+        console.log(`[PopularPages] Top 5 pages:`, pages.slice(0, 5).map(p => `${p.title} (${p.revisions} revisions)`));
+      } else {
+        console.log(`[PopularPages] No pages found - this might indicate a parsing issue`);
+        // Log some of the page structure for debugging
+        console.log(`[PopularPages] Page title:`, $('title').text());
+        console.log(`[PopularPages] First few ol li items:`, $('ol li').slice(0, 3).map((i, el) => $(el).text()).get());
+      }
+
+      return {
+        pages: pages,
+        hasMore: pages.length === limit
+      };
+
+    } catch (error) {
+      console.error('[PopularPages] Scraping approach failed:', error.message);
+      throw new Error(`Failed to scrape popular pages: ${error.message}`);
+    }
+  }
+
   // Get processing statistics for a fandom
   async getProcessingStats(fandomName) {
     try {

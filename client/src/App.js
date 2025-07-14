@@ -4,6 +4,7 @@ import GenerationForm from './components/GenerationForm';
 import ProgressMonitor from './components/ProgressMonitor';
 import QuestionsList from './components/QuestionsList';
 import History from './components/History';
+import PopularPages from './components/PopularPages';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -75,6 +76,7 @@ export default function App() {
           <div className="flex space-x-8">
             {[
               { id: 'generate', label: 'Generate Questions', icon: '🎯' },
+              { id: 'popular', label: 'Popular Pages', icon: '⭐' },
               { id: 'progress', label: 'Progress Monitor', icon: '📊' },
               { id: 'questions', label: 'View Questions', icon: '❓' },
               { id: 'history', label: 'Generation History', icon: '📜' }
@@ -102,6 +104,9 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {activeTab === 'generate' && (
           <GenerationForm onStart={handleGenerationStart} />
+        )}
+        {activeTab === 'popular' && (
+          <PopularPages onStart={handleGenerationStart} />
         )}
         {activeTab === 'progress' && (
           <ProgressMonitor

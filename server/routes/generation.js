@@ -154,6 +154,21 @@ router.get('/wiki/:wikiName/categories/search', async (req, res) => {
   }
 });
 
+// NEW: Get popular pages from Special:MostRevisions
+router.get('/wiki/:wikiName/popular-pages', async (req, res) => {
+  try {
+    const { limit } = req.query;
+    const result = await scrapingService.getPopularPages(
+      req.params.wikiName, 
+      parseInt(limit) || 100
+    );
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching popular pages:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // New endpoint to get processing stats for a fandom
 router.get('/wiki/:wikiName/stats', async (req, res) => {
   try {
