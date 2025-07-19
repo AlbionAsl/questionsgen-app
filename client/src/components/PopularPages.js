@@ -493,16 +493,16 @@ export default function PopularPages({ onStart }) {
                 <p className="mt-1 text-xs text-gray-500">Limits OpenAI API usage</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Questions per Chunk</label>
+                <label className="block text-sm font-medium text-gray-700">Questions per Section</label>
                 <input
                   type="number"
                   value={formData.questionsPerChunk}
                   onChange={(e) => setFormData({ ...formData, questionsPerChunk: parseInt(e.target.value) })}
                   min="1"
-                  max="10"
+                  max="20"
                   className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
                 />
-                <p className="mt-1 text-xs text-gray-500">Questions generated per text chunk</p>
+                <p className="mt-1 text-xs text-gray-500">Base multiplier (actual questions = words ÷ 100)</p>
               </div>
             </div>
           </div>

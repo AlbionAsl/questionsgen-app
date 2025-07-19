@@ -67,110 +67,311 @@ class ScrapingService {
         return null;
       }
 
-      // Remove unwanted elements
-      $('table, script, style, aside, img').remove();
+      console.log(`[Content] Raw HTML length: ${htmlContent.length} characters`);
+      console.log(`[Content] Found elements: h1=${$('h1').length}, h2=${$('h2').length}, h3=${$('h3').length}, p=${$('p').length}`);
+
+      // Remove unwanted elements but keep structure for section parsing
+      $('script, style, .navbox, .sidebar, .toc, .thumb, .gallery').remove();
+      
+      // Remove edit links but keep the content structure
+      $('span.mw-editsection').remove();
 
       const unwantedSectionIds = [
         'References', 'Navigation', 'External_Links', 'See_also',
         'Site_Navigation', 'Gallery', 'Merchandise', 'Major_Battles',
-        'Real-life_Counterpart', 'Credits'
+        'Real-life_Counterpart', 'Credits', 'Trivia', 'Notes'
       ];
 
-      // Remove unwanted sections
+      // Remove unwanted sections more aggressively
       unwantedSectionIds.forEach((sectionId) => {
-        $(`h2 span.mw-headline#${sectionId}`).each(function () {
-          const header = $(this).closest('h2');
-          header.nextUntil('h2').remove();
-          header.remove();
+        // Try multiple selectors for section removal
+        $(`#${sectionId}, #${sectionId.toLowerCase()}, [id*="${sectionId}"]`).each(function() {
+          const $header = $(this).closest('h1, h2, h3, h4, h5, h6');
+          if ($header.length > 0) {
+            // Remove everything until the next header of same or higher level
+            const headerLevel = parseInt($header[0].tagName.charAt(1));
+            let $current = $header.next();
+            
+            while ($current.length > 0) {
+              const $next = $current.next();
+              const currentTag = $current[0].tagName?.toLowerCase();
+              
+              // Stop if we hit another header of same or higher level
+              if (currentTag && currentTag.match(/^h[1-6]$/)) {
+                const currentLevel = parseInt(currentTag.charAt(1));
+                if (currentLevel <= headerLevel) {
+                  break;
+                }
+              }
+              
+              $current.remove();
+              $current = $next;
+            }
+            
+            // Remove the header itself
+            $header.remove();
+          }
+        });
+        
+        // Also try span-based selectors for Fandom wikis
+        $(`span.mw-headline#${sectionId}, span.mw-headline#${sectionId.toLowerCase()}`).each(function () {
+          const header = $(this).closest('h1, h2, h3, h4, h5, h6');
+          if (header.length > 0) {
+            const headerLevel = parseInt(header[0].tagName.charAt(1));
+            let next = header.next();
+            
+            while (next.length > 0 && !next.is(`h1, h2, h3, h4, h5, h6`)) {
+              const toRemove = next;
+              next = next.next();
+              toRemove.remove();
+            }
+            
+            header.remove();
+          }
         });
       });
 
-      // Replace links with text
-      $('a').each(function () {
-        const linkText = $(this).text();
-        $(this).replaceWith(linkText);
-      });
+      console.log(`[Content] After cleanup: h1=${$('h1').length}, h2=${$('h2').length}, h3=${$('h3').length}, p=${$('p').length}`);
 
-      // Extract and clean text
-      let textContent = $.root().text();
-      textContent = textContent.replace(/<\/?[^>]+(>|$)/g, '');
-      textContent = textContent.replace(/\s+/g, ' ').trim();
-      textContent = textContent.replace(/\[.*?\]/g, '');
+      // Extract sections with their structure
+      return this.extractSections($, title);
 
-      return textContent;
     } catch (error) {
       console.error(`Error fetching page '${title}':`, error.message);
       throw error;
     }
   }
 
-  splitContent(content, maxChunkSize = 500, minChunkSize = 200) {
-    const words = content.split(/\s+/);
-    const chunks = [];
-    let currentChunk = [];
+  // NEW: Extract sections from parsed HTML
+  extractSections($, pageTitle) {
+    console.log(`[Sections] Extracting sections from: ${pageTitle}`);
+    
+    const sections = [];
+    let currentSection = {
+      title: 'Introduction',
+      level: 1,
+      content: '',
+      wordCount: 0
+    };
 
-    for (const word of words) {
-      currentChunk.push(word);
-
-      if (currentChunk.length >= maxChunkSize) {
-        const chunkText = currentChunk.join(' ');
-        chunks.push(chunkText);
-        currentChunk = [];
-      }
+    // Fandom wikis use specific structure - let's target the main content area
+    const contentArea = $('.mw-parser-output, .mw-content-text, .page-content').first();
+    if (contentArea.length === 0) {
+      console.log('[Sections] Could not find main content area, using body');
+      contentArea = $('body');
     }
 
-    // Handle the last chunk
-    if (currentChunk.length > 0) {
-      const chunkText = currentChunk.join(' ');
-      if (chunkText.split(' ').length >= minChunkSize) {
-        chunks.push(chunkText);
-      } else if (chunks.length > 0) {
-        const previousChunk = chunks[chunks.length - 1];
-        const combinedLength = previousChunk.split(' ').length + chunkText.split(' ').length;
-        if (combinedLength <= maxChunkSize + 300) {
-          chunks[chunks.length - 1] = `${previousChunk} ${chunkText}`;
+    // Process all direct children of the content area
+    contentArea.children().each((index, element) => {
+      const $el = $(element);
+      const tagName = element.tagName?.toLowerCase();
+
+      // Check if this is a section header (h1, h2, h3, h4, h5, h6)
+      if (tagName && tagName.match(/^h[1-6]$/)) {
+        // Save current section if it has content
+        if (currentSection.content.trim().length > 0) {
+          currentSection.wordCount = this.countWords(currentSection.content);
+          sections.push({ ...currentSection });
+          console.log(`[Sections] Saved section: "${currentSection.title}" (${currentSection.wordCount} words)`);
+        }
+
+        // Extract header text - try multiple selectors for Fandom wikis
+        let headerText = '';
+        
+        // Try different ways to get the header text
+        const headlineSpan = $el.find('.mw-headline').first();
+        if (headlineSpan.length > 0) {
+          headerText = headlineSpan.text().trim();
+        } else {
+          // Fallback to full header text
+          headerText = $el.text().trim();
+        }
+
+        // Clean up header text
+        headerText = headerText
+          .replace(/\[edit\]/g, '') // Remove [edit] links
+          .replace(/\[[^\]]*\]/g, '') // Remove other bracketed content
+          .trim();
+        
+        if (headerText && headerText.length > 0) {
+          console.log(`[Sections] Found header: "${headerText}" (${tagName})`);
+          
+          currentSection = {
+            title: headerText,
+            level: parseInt(tagName.charAt(1)), // h2 -> 2, h3 -> 3, etc.
+            content: '',
+            wordCount: 0
+          };
+        }
+      } else {
+        // Add content to current section
+        let textContent = '';
+        
+        // Handle different content types
+        if (tagName === 'p' || tagName === 'div' || tagName === 'ul' || tagName === 'ol' || tagName === 'dl') {
+          // For paragraphs and lists, extract text
+          const clonedEl = $el.clone();
+          
+          // Remove unwanted elements
+          clonedEl.find('script, style, .navbox, .infobox, .toc, .references, .reflist').remove();
+          
+          // Replace links with their text content
+          clonedEl.find('a').each(function() {
+            $(this).replaceWith($(this).text());
+          });
+          
+          textContent = clonedEl.text();
+        } else if (tagName === 'table') {
+          // Skip most tables unless they contain significant text content
+          const tableText = $el.text();
+          if (tableText.length > 100) {
+            textContent = tableText;
+          }
+        }
+        
+        if (textContent && textContent.trim().length > 0) {
+          const cleanText = textContent
+            .replace(/\s+/g, ' ') // Normalize whitespace
+            .replace(/\[.*?\]/g, '') // Remove reference brackets
+            .replace(/\([^)]*edit[^)]*\)/g, '') // Remove (edit) links
+            .trim();
+          
+          if (cleanText.length > 10) { // Only add substantial content
+            currentSection.content += (currentSection.content ? ' ' : '') + cleanText;
+          }
         }
       }
+    });
+
+    // Don't forget the last section
+    if (currentSection.content.trim().length > 0) {
+      currentSection.wordCount = this.countWords(currentSection.content);
+      sections.push(currentSection);
+      console.log(`[Sections] Saved final section: "${currentSection.title}" (${currentSection.wordCount} words)`);
     }
 
-    return chunks;
+    console.log(`[Sections] Found ${sections.length} raw sections`);
+    
+    // Log section titles for debugging
+    sections.forEach((section, index) => {
+      console.log(`[Sections] Section ${index + 1}: "${section.title}" (${section.wordCount} words)`);
+    });
+    
+    // Process sections according to word count rules
+    return this.processSections(sections);
   }
 
-  // Generate a unique identifier for a chunk
-  generateChunkId(category, pageTitle, chunkNumber, fandomName) {
-    const data = `${fandomName}_${category}_${pageTitle}_${chunkNumber}`;
+  // NEW: Process sections according to word count rules
+  processSections(rawSections) {
+    console.log(`[Sections] Processing ${rawSections.length} raw sections...`);
+    
+    const processedSections = [];
+    let currentSection = null;
+
+    for (let i = 0; i < rawSections.length; i++) {
+      const section = rawSections[i];
+      
+      console.log(`[Sections] Processing: "${section.title}" (${section.wordCount} words)`);
+
+      if (!currentSection) {
+        currentSection = { ...section };
+      } else {
+        // Merge sections if current is below minimum
+        if (currentSection.wordCount < 200) {
+          console.log(`[Sections] Merging "${currentSection.title}" with "${section.title}" (below 200 words)`);
+          currentSection.title = `${currentSection.title} & ${section.title}`;
+          currentSection.content += ' ' + section.content;
+          currentSection.wordCount = this.countWords(currentSection.content);
+        } else {
+          // Current section is valid, save it and start new one
+          processedSections.push(this.finalizeSection(currentSection));
+          currentSection = { ...section };
+        }
+      }
+
+      // Check if current section exceeds maximum
+      if (currentSection.wordCount > 2000) {
+        console.log(`[Sections] Truncating "${currentSection.title}" (exceeds 2000 words)`);
+        const words = currentSection.content.split(/\s+/);
+        currentSection.content = words.slice(0, 2000).join(' ');
+        currentSection.wordCount = 2000;
+      }
+    }
+
+    // Handle the last section
+    if (currentSection) {
+      if (currentSection.wordCount >= 200) {
+        processedSections.push(this.finalizeSection(currentSection));
+      } else if (processedSections.length > 0) {
+        // Merge with previous section if below minimum
+        console.log(`[Sections] Merging final section "${currentSection.title}" with previous section`);
+        const lastSection = processedSections[processedSections.length - 1];
+        lastSection.title = `${lastSection.title} & ${currentSection.title}`;
+        lastSection.content += ' ' + currentSection.content;
+        lastSection.wordCount = this.countWords(lastSection.content);
+        lastSection.questionCount = Math.ceil(lastSection.wordCount / 100);
+      }
+    }
+
+    console.log(`[Sections] Final result: ${processedSections.length} sections`);
+    processedSections.forEach(section => {
+      console.log(`[Sections] - "${section.title}": ${section.wordCount} words, ${section.questionCount} questions`);
+    });
+
+    return processedSections;
+  }
+
+  // NEW: Finalize section with question count calculation
+  finalizeSection(section) {
+    const questionCount = Math.ceil(section.wordCount / 100);
+    return {
+      ...section,
+      questionCount: Math.max(1, questionCount) // Minimum 1 question per section
+    };
+  }
+
+  // NEW: Count words in text
+  countWords(text) {
+    if (!text || typeof text !== 'string') return 0;
+    return text.trim().split(/\s+/).filter(word => word.length > 0).length;
+  }
+
+  // Generate a unique identifier for a section
+  generateSectionId(category, pageTitle, sectionTitle, fandomName) {
+    const data = `${fandomName}_${category}_${pageTitle}_${sectionTitle}`;
     return crypto.createHash('md5').update(data).digest('hex');
   }
 
-  // Check if chunk was already processed using Firestore
-  async isChunkProcessed(chunkId, fandomName) {
+  // Check if section was already processed using Firestore
+  async isSectionProcessed(sectionId, fandomName) {
     try {
       const db = getDb();
-      const doc = await db.collection('processedChunks').doc(chunkId).get();
+      const doc = await db.collection('processedSections').doc(sectionId).get();
       return doc.exists;
     } catch (error) {
-      console.error('Error checking if chunk is processed:', error.message);
+      console.error('Error checking if section is processed:', error.message);
       // If there's an error, assume not processed to be safe
       return false;
     }
   }
 
-  // Mark chunk as processed in Firestore
-  async markChunkAsProcessed(chunkId, fandomName, metadata = {}) {
+  // Mark section as processed in Firestore
+  async markSectionAsProcessed(sectionId, fandomName, metadata = {}) {
     try {
       const db = getDb();
-      await db.collection('processedChunks').doc(chunkId).set({
-        chunkId,
+      await db.collection('processedSections').doc(sectionId).set({
+        sectionId,
         fandomName,
         category: metadata.category || '',
         pageTitle: metadata.pageTitle || '',
-        chunkNumber: metadata.chunkNumber || 0,
-        processedAt: admin.firestore.FieldValue.serverTimestamp(),
-        questionsGenerated: true
+        sectionTitle: metadata.sectionTitle || '',
+        wordCount: metadata.wordCount || 0,
+        questionsGenerated: metadata.questionsGenerated || 0,
+        processedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      console.log(`Marked chunk ${chunkId} as processed`);
+      console.log(`Marked section ${sectionId} as processed`);
     } catch (error) {
-      console.error('Error marking chunk as processed:', error.message);
+      console.error('Error marking section as processed:', error.message);
       // Don't throw error here as it's not critical for the main flow
     }
   }
@@ -442,31 +643,53 @@ class ScrapingService {
   async getProcessingStats(fandomName) {
     try {
       const db = getDb();
-      const snapshot = await db.collection('processedChunks')
+      
+      // Check both old chunk-based and new section-based processing
+      const chunksSnapshot = await db.collection('processedChunks')
+        .where('fandomName', '==', fandomName)
+        .get();
+        
+      const sectionsSnapshot = await db.collection('processedSections')
         .where('fandomName', '==', fandomName)
         .get();
 
       const stats = {
-        totalChunks: snapshot.size,
+        totalChunks: chunksSnapshot.size, // Legacy chunk processing
+        totalSections: sectionsSnapshot.size, // New section processing
         byCategory: {},
         byPage: {},
         lastProcessed: null
       };
 
-      snapshot.docs.forEach(doc => {
+      // Process legacy chunks
+      chunksSnapshot.docs.forEach(doc => {
         const data = doc.data();
         
-        // Count by category
         if (data.category) {
           stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
         }
         
-        // Count by page
         if (data.pageTitle) {
           stats.byPage[data.pageTitle] = (stats.byPage[data.pageTitle] || 0) + 1;
         }
 
-        // Track last processed
+        if (data.processedAt && (!stats.lastProcessed || data.processedAt.toDate() > stats.lastProcessed)) {
+          stats.lastProcessed = data.processedAt.toDate();
+        }
+      });
+
+      // Process new sections
+      sectionsSnapshot.docs.forEach(doc => {
+        const data = doc.data();
+        
+        if (data.category) {
+          stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
+        }
+        
+        if (data.pageTitle) {
+          stats.byPage[data.pageTitle] = (stats.byPage[data.pageTitle] || 0) + 1;
+        }
+
         if (data.processedAt && (!stats.lastProcessed || data.processedAt.toDate() > stats.lastProcessed)) {
           stats.lastProcessed = data.processedAt.toDate();
         }
@@ -475,7 +698,7 @@ class ScrapingService {
       return stats;
     } catch (error) {
       console.error('Error fetching processing stats:', error.message);
-      return { totalChunks: 0, byCategory: {}, byPage: {}, lastProcessed: null };
+      return { totalChunks: 0, totalSections: 0, byCategory: {}, byPage: {}, lastProcessed: null };
     }
   }
 

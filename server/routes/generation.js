@@ -187,7 +187,7 @@ async function generateQuestions(
   categories,
   individualPages,
   maxApiCalls,
-  questionsPerChunk,
+  questionsPerChunk, // This is now used as a multiplier/fallback
   io
 ) {
   const process = activeProcesses.get(processId);
@@ -231,41 +231,44 @@ async function generateQuestions(
       }
 
       log(`Processing page: ${page.title}`);
-      const content = await scrapingService.fetchPageContent(page.title, fandomWikiName);
-      if (!content) {
-        log(`No content for page: ${page.title}`, 'warning');
+      const sections = await scrapingService.fetchPageContent(page.title, fandomWikiName);
+      if (!sections || sections.length === 0) {
+        log(`No content sections found for page: ${page.title}`, 'warning');
         workDone++;
         continue;
       }
 
-      const chunks = scrapingService.splitContent(content);
-      log(`Split into ${chunks.length} chunks.`);
+      log(`Found ${sections.length} sections for processing.`);
 
-      for (let i = 0; i < chunks.length; i++) {
+      for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
         if (process.apiCallsMade >= maxApiCalls) {
           log(`API call limit of ${maxApiCalls} reached.`, 'warning');
           process.status = 'stopping';
           break;
         }
         
-        const chunkId = scrapingService.generateChunkId(page.category, page.title, i + 1, fandomWikiName);
+        const section = sections[sectionIndex];
+        const sectionId = scrapingService.generateSectionId(page.category, page.title, section.title, fandomWikiName);
 
-        // Check if chunk was already processed (async call)
-        const isProcessed = await scrapingService.isChunkProcessed(chunkId, fandomWikiName);
+        log(`Processing section: "${section.title}" (${section.wordCount} words, ${section.questionCount} questions planned)`);
+
+        // Check if section was already processed
+        const isProcessed = await scrapingService.isSectionProcessed(sectionId, fandomWikiName);
         
         if (!isProcessed) {
-          log(`Generating questions for chunk ${i + 1}/${chunks.length}...`);
+          log(`Generating ${section.questionCount} questions for section: "${section.title}"`);
           
-          // Pass the OpenAI model and prompt instructions to question generation
+          // Generate questions using the calculated amount for this section
           const questions = await questionsService.generateQuestions(
-            chunks[i], 
-            questionsPerChunk, 
+            section.content, 
+            section.questionCount, // Use calculated question count per section
             animeName, 
             page.category, 
             page.title,
             {
               model: process.openaiModel,
-              promptInstructions: process.promptInstructions
+              promptInstructions: process.promptInstructions,
+              sectionTitle: section.title // Add section context
             }
           );
 
@@ -277,25 +280,28 @@ async function generateQuestions(
                 animeName, 
                 category: page.category, 
                 pageTitle: page.title,
+                sectionTitle: section.title,
                 model: process.openaiModel,
                 promptInstructions: process.promptInstructions
               }
             );
             process.questionsGenerated += count;
-            log(`Generated ${count} questions.`, 'success');
+            log(`Generated ${count} questions for section "${section.title}".`, 'success');
             emit('questionsGenerated', { count, total: process.questionsGenerated });
           }
           
           process.apiCallsMade++;
           
-          // Mark chunk as processed (async call with metadata)
-          await scrapingService.markChunkAsProcessed(chunkId, fandomWikiName, {
+          // Mark section as processed
+          await scrapingService.markSectionAsProcessed(sectionId, fandomWikiName, {
             category: page.category,
             pageTitle: page.title,
-            chunkNumber: i + 1
+            sectionTitle: section.title,
+            wordCount: section.wordCount,
+            questionsGenerated: questions ? questions.length : 0
           });
         } else {
-          log(`Skipping chunk ${i + 1}/${chunks.length} (already processed).`);
+          log(`Skipping section "${section.title}" (already processed).`);
         }
       }
       

@@ -13,34 +13,40 @@ const QuestionsSchema = z.array(
 );
 
 class QuestionService {
-  async generateQuestions(chunk, amountOfQuestions, animeName, category, pageTitle, options = {}) {
+  async generateQuestions(content, amountOfQuestions, animeName, category, pageTitle, options = {}) {
     const startTime = Date.now();
     console.log(`[Questions] Starting generation for ${amountOfQuestions} questions`);
     console.log(`[Questions] Using model: ${options.model || 'gpt-4o-mini'}`);
-    console.log(`[Questions] Chunk length: ${chunk.length} characters`);
+    console.log(`[Questions] Content length: ${content.length} characters`);
+    console.log(`[Questions] Section: ${options.sectionTitle || 'N/A'}`);
     
     // Validate input
-    if (!chunk || chunk.trim().length === 0) {
+    if (!content || content.trim().length === 0) {
       throw new Error('Cannot generate questions from empty content');
     }
     
-    if (chunk.length > 15000) {
-      console.warn(`[Questions] Chunk is very large (${chunk.length} chars), truncating to 15000`);
-      chunk = chunk.substring(0, 15000);
+    if (content.length > 15000) {
+      console.warn(`[Questions] Content is very large (${content.length} chars), truncating to 15000`);
+      content = content.substring(0, 15000);
     }
 
     // Use custom prompt instructions or default
     const defaultInstructions = 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.';
     const promptInstructions = options.promptInstructions || defaultInstructions;
 
+    // Enhanced prompt with section context
+    const sectionContext = options.sectionTitle ? `This content is from the "${options.sectionTitle}" section of the page. ` : '';
+    
     const prompt = `
 Generate ${amountOfQuestions} multiple-choice questions based on the following text. ${promptInstructions}
+
+${sectionContext}Focus on the specific information covered in this section.
 
 Text:
 For reference, this piece of text is about the Anime: ${animeName} ${
       category ? `with category: ${category}` : ''
-    } and title: ${pageTitle}
-${chunk}
+    } and page title: ${pageTitle}${options.sectionTitle ? ` (Section: ${options.sectionTitle})` : ''}
+${content}
 `;
 
     const functions = [
@@ -151,6 +157,7 @@ ${chunk}
           animeName: metadata.animeName || '',
           category: metadata.category || '',
           pageTitle: metadata.pageTitle || '',
+          sectionTitle: metadata.sectionTitle || '', // NEW: Section information
           question: q.question,
           options: q.options,
           correctAnswer: q.correctAnswer,
@@ -159,8 +166,9 @@ ${chunk}
             model: metadata.model || 'gpt-4o-mini',
             promptInstructions: metadata.promptInstructions || 'default',
             generatedAt: new Date().toISOString(),
-            generationVersion: '2.0', // Track different versions of generation logic
-            chunkProcessed: true
+            generationVersion: '2.1', // Updated version for section-based generation
+            sectionProcessed: true, // NEW: Track section-based processing
+            sectionTitle: metadata.sectionTitle || '' // NEW: Section context
           },
           // Question analytics
           difficulty: 0, // Can be updated based on user feedback
@@ -218,6 +226,11 @@ ${chunk}
       query = query.where('generationMetadata.model', '==', filters.model);
     }
 
+    // Add section filter if provided
+    if (filters.sectionTitle) {
+      query = query.where('sectionTitle', '==', filters.sectionTitle);
+    }
+
     if (filters.limit) {
       query = query.limit(filters.limit);
     }
@@ -248,11 +261,13 @@ ${chunk}
         total: snapshot.size,
         byAnime: {},
         byCategory: {},
+        bySection: {}, // NEW: Stats by section
         byModel: {}, // Stats by AI model used
         byDifficulty: { 0: 0, 1: 0, 2: 0 }, // Easy, Medium, Hard
         recentQuestions: [],
         averageAccuracy: 0,
-        totalAnswered: 0
+        totalAnswered: 0,
+        generationVersions: {} // Track different generation versions
       };
 
       let totalAccuracy = 0;
@@ -271,9 +286,18 @@ ${chunk}
           stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
         }
 
+        // Count by section (NEW)
+        if (data.sectionTitle) {
+          stats.bySection[data.sectionTitle] = (stats.bySection[data.sectionTitle] || 0) + 1;
+        }
+
         // Count by AI model
         const model = data.generationMetadata?.model || 'unknown';
         stats.byModel[model] = (stats.byModel[model] || 0) + 1;
+
+        // Count by generation version
+        const version = data.generationMetadata?.generationVersion || 'legacy';
+        stats.generationVersions[version] = (stats.generationVersions[version] || 0) + 1;
 
         // Count by difficulty
         if (data.difficulty !== undefined) {
@@ -313,7 +337,7 @@ ${chunk}
     }
   }
 
-  // New method to get questions by chunk processing status
+  // New method to get questions by section processing status
   async getQuestionsByProcessingStatus(fandomName, processed = true) {
     const db = getDb();
     
@@ -321,9 +345,9 @@ ${chunk}
       let query = db.collection('questions');
       
       if (processed) {
-        query = query.where('generationMetadata.chunkProcessed', '==', true);
+        query = query.where('generationMetadata.sectionProcessed', '==', true);
       } else {
-        query = query.where('generationMetadata.chunkProcessed', '==', false);
+        query = query.where('generationMetadata.sectionProcessed', '==', false);
       }
       
       const snapshot = await query.get();
@@ -399,6 +423,9 @@ ${chunk}
     if (filters.category) {
       query = query.where('category', '==', filters.category);
     }
+    if (filters.sectionTitle) {
+      query = query.where('sectionTitle', '==', filters.sectionTitle);
+    }
     if (filters.difficulty !== undefined) {
       query = query.where('difficulty', '==', filters.difficulty);
     }
@@ -448,6 +475,35 @@ ${chunk}
     }
   }
 
+  // Method to get questions by section for analysis
+  async getQuestionsBySection(animeName, sectionTitle) {
+    const db = getDb();
+    
+    try {
+      let query = db.collection('questions');
+      
+      if (animeName) {
+        query = query.where('animeName', '==', animeName);
+      }
+      
+      if (sectionTitle) {
+        query = query.where('sectionTitle', '==', sectionTitle);
+      }
+      
+      query = query.orderBy('createdAt', 'desc');
+      
+      const snapshot = await query.get();
+      return snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        createdAt: doc.data().createdAt ? doc.data().createdAt.toDate() : null,
+      }));
+    } catch (error) {
+      console.error('Error fetching questions by section:', error.message);
+      throw error;
+    }
+  }
+
   // Method to clean up questions (e.g., remove duplicates, low-quality questions)
   async cleanupQuestions(options = {}) {
     const db = getDb();
@@ -478,6 +534,50 @@ ${chunk}
       return deleteCount;
     } catch (error) {
       console.error('Error cleaning up questions:', error.message);
+      throw error;
+    }
+  }
+
+  // Method to migrate legacy questions to include section information
+  async migrateLegacyQuestions() {
+    const db = getDb();
+    
+    try {
+      // Find questions that don't have section information
+      const legacyQuery = db.collection('questions')
+        .where('generationMetadata.sectionProcessed', '==', false)
+        .limit(100); // Process in batches
+      
+      const snapshot = await legacyQuery.get();
+      
+      if (snapshot.empty) {
+        console.log('[Questions] No legacy questions to migrate');
+        return 0;
+      }
+      
+      const batch = db.batch();
+      let migratedCount = 0;
+      
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        
+        // Update with section-based metadata
+        batch.update(doc.ref, {
+          sectionTitle: data.sectionTitle || 'Legacy Content',
+          'generationMetadata.sectionProcessed': true,
+          'generationMetadata.generationVersion': '2.1-migrated',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        migratedCount++;
+      });
+      
+      await batch.commit();
+      console.log(`[Questions] Migrated ${migratedCount} legacy questions`);
+      return migratedCount;
+      
+    } catch (error) {
+      console.error('Error migrating legacy questions:', error.message);
       throw error;
     }
   }

@@ -218,6 +218,15 @@ export default function GenerationForm({ onStart }) {
     <div className="max-w-4xl mx-auto">
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Generate New Questions</h2>
+        
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+          <h4 className="text-sm font-medium text-blue-800 mb-2">🆕 Enhanced Section-Based Processing</h4>
+          <div className="text-sm text-blue-700">
+            <p>Questions are now generated per wiki section (Introduction, Personality, Abilities, etc.)</p>
+            <p><strong>Smart sizing:</strong> Sections with 200+ words, questions = words ÷ 100</p>
+            <p><strong>Automatic merging:</strong> Small sections combined, large sections truncated at 2000 words</p>
+          </div>
+        </div>
 
         {error && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
@@ -304,15 +313,20 @@ export default function GenerationForm({ onStart }) {
           </div>
 
           {/* Processing Stats */}
-          {processingStats && processingStats.totalChunks > 0 && (
+          {processingStats && (processingStats.totalChunks > 0 || processingStats.totalSections > 0) && (
             <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
               <h4 className="text-sm font-medium text-blue-800 mb-2">📊 Previous Processing Stats</h4>
               <div className="text-sm text-blue-700">
-                <p>Total chunks processed: <span className="font-semibold">{processingStats.totalChunks}</span></p>
+                {processingStats.totalSections > 0 && (
+                  <p>Sections processed: <span className="font-semibold">{processingStats.totalSections}</span></p>
+                )}
+                {processingStats.totalChunks > 0 && (
+                  <p>Legacy chunks processed: <span className="font-semibold">{processingStats.totalChunks}</span></p>
+                )}
                 {processingStats.lastProcessed && (
                   <p>Last processed: <span className="font-semibold">{new Date(processingStats.lastProcessed).toLocaleDateString()}</span></p>
                 )}
-                <p className="mt-1 text-xs">Previously processed chunks will be automatically skipped.</p>
+                <p className="mt-1 text-xs">Previously processed content will be automatically skipped.</p>
               </div>
             </div>
           )}
@@ -547,16 +561,16 @@ export default function GenerationForm({ onStart }) {
                 <p className="mt-1 text-xs text-gray-500">Limits OpenAI API usage</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Questions per Chunk</label>
+                <label className="block text-sm font-medium text-gray-700">Base Question Multiplier</label>
                 <input
                   type="number"
                   value={formData.questionsPerChunk}
                   onChange={(e) => setFormData({ ...formData, questionsPerChunk: parseInt(e.target.value) })}
                   min="1"
-                  max="10"
+                  max="20"
                   className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
                 />
-                <p className="mt-1 text-xs text-gray-500">Questions generated per text chunk</p>
+                <p className="mt-1 text-xs text-gray-500">Fallback value (actual questions = section words ÷ 100)</p>
               </div>
             </div>
           </div>
@@ -577,7 +591,7 @@ export default function GenerationForm({ onStart }) {
               {loading ? (
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
               ) : (
-                'Start Generation'
+                'Start Section-Based Generation'
               )}
             </button>
           </div>
