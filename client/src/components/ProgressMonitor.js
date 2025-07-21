@@ -5,7 +5,9 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 export default function ProgressMonitor({ processId, socket, onComplete }) {
   const [process, setProcess] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [prompts, setPrompts] = useState([]); // NEW: Store prompts
   const [loading, setLoading] = useState(true);
+  const [expandedPrompts, setExpandedPrompts] = useState(new Set()); // NEW: Track expanded prompts
 
   useEffect(() => {
     if (!processId) {
@@ -23,6 +25,7 @@ export default function ProgressMonitor({ processId, socket, onComplete }) {
       socket.on(`generation:${processId}:questionsGenerated`, handleQuestionsGenerated);
       socket.on(`generation:${processId}:completed`, handleCompleted);
       socket.on(`generation:${processId}:error`, handleError);
+      socket.on(`generation:${processId}:promptGenerated`, handlePromptGenerated); // NEW: Prompt listener
 
       return () => {
         socket.off(`generation:${processId}:log`);
@@ -30,6 +33,7 @@ export default function ProgressMonitor({ processId, socket, onComplete }) {
         socket.off(`generation:${processId}:questionsGenerated`);
         socket.off(`generation:${processId}:completed`);
         socket.off(`generation:${processId}:error`);
+        socket.off(`generation:${processId}:promptGenerated`); // NEW: Cleanup
       };
     }
   }, [processId, socket]);
@@ -68,12 +72,30 @@ export default function ProgressMonitor({ processId, socket, onComplete }) {
     setProcess(prev => ({ ...prev, status: 'error', error: message }));
   };
 
+  // NEW: Handle prompt data
+  const handlePromptGenerated = (promptData) => {
+    setPrompts(prev => [...prev, { ...promptData, id: `prompt_${prev.length + 1}` }]);
+  };
+
   const handleStop = async () => {
     try {
       await fetch(`${API_URL}/api/generation/stop/${processId}`, { method: 'POST' });
     } catch (error) {
       console.error('Error stopping process:', error);
     }
+  };
+
+  // NEW: Toggle prompt expansion
+  const togglePromptExpansion = (promptId) => {
+    setExpandedPrompts(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(promptId)) {
+        newSet.delete(promptId);
+      } else {
+        newSet.add(promptId);
+      }
+      return newSet;
+    });
   };
 
   const getStatusColor = (status) => {
@@ -187,7 +209,100 @@ export default function ProgressMonitor({ processId, socket, onComplete }) {
         )}
       </div>
 
-      {/* Logs */}
+      {/* NEW: Prompts Section */}
+      {prompts.length > 0 && (
+        <div className="bg-white shadow rounded-lg p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            🤖 AI Prompts Generated ({prompts.length})
+          </h3>
+          <div className="space-y-3">
+            {prompts.map((promptData) => (
+              <div key={promptData.id} className="border border-gray-200 rounded-md">
+                {/* Prompt Header */}
+                <div 
+                  className="px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 flex items-center justify-between"
+                  onClick={() => togglePromptExpansion(promptData.id)}
+                >
+                  <div className="flex-1">
+                    <div className="flex items-center space-x-3">
+                      <span className="text-sm font-medium text-gray-900">
+                        {promptData.sectionTitle}
+                      </span>
+                      <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                        {promptData.model}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {promptData.questionsRequested} questions
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Page: {promptData.pageTitle} • Content: {promptData.contentLength} chars • Prompt: {promptData.promptLength} chars
+                    </div>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs text-gray-400">
+                      {new Date(promptData.timestamp).toLocaleTimeString()}
+                    </span>
+                    <span className="text-gray-400">
+                      {expandedPrompts.has(promptData.id) ? '▼' : '▶'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Expanded Prompt Content */}
+                {expandedPrompts.has(promptData.id) && (
+                  <div className="px-4 py-3 border-t border-gray-200">
+                    <div className="space-y-4">
+                      {/* Prompt Metadata */}
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-500">Model:</span>
+                          <span className="ml-2 font-medium">{promptData.model}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Questions:</span>
+                          <span className="ml-2 font-medium">{promptData.questionsRequested}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Content Length:</span>
+                          <span className="ml-2 font-medium">{promptData.contentLength.toLocaleString()} chars</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Prompt Length:</span>
+                          <span className="ml-2 font-medium">{promptData.promptLength.toLocaleString()} chars</span>
+                        </div>
+                      </div>
+
+                      {/* Full Prompt Display */}
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-700 mb-2">🔤 Complete Prompt Sent to AI:</h4>
+                        <div className="bg-gray-900 text-green-400 p-4 rounded-lg text-sm font-mono overflow-x-auto max-h-96 overflow-y-auto">
+                          <pre className="whitespace-pre-wrap break-words">{promptData.fullPrompt}</pre>
+                        </div>
+                      </div>
+
+                      {/* Copy Button */}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(promptData.fullPrompt);
+                            // Could add a toast notification here
+                          }}
+                          className="px-3 py-1 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-md transition-colors"
+                        >
+                          📋 Copy Prompt
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Activity Log */}
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Activity Log</h3>
         <div className="space-y-2 max-h-96 overflow-y-auto">

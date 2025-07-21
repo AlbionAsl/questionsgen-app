@@ -198,6 +198,11 @@ async function generateQuestions(
     emit('log', logEntry);
   };
 
+  // NEW: Create socket emitter for prompt data
+  const socketEmitter = (event, data) => {
+    emit(event, data);
+  };
+
   try {
     log(`Fetching AniList ID for ${animeName}...`);
     const animeData = await animeService.getAnimeId(animeName);
@@ -259,6 +264,7 @@ async function generateQuestions(
           log(`Generating ${section.questionCount} questions for section: "${section.title}"`);
           
           // Generate questions using the calculated amount for this section
+          // NEW: Pass socket emitter for prompt monitoring
           const questions = await questionsService.generateQuestions(
             section.content, 
             section.questionCount, // Use calculated question count per section
@@ -268,7 +274,8 @@ async function generateQuestions(
             {
               model: process.openaiModel,
               promptInstructions: process.promptInstructions,
-              sectionTitle: section.title // Add section context
+              sectionTitle: section.title, // Add section context
+              socketEmitter: socketEmitter // NEW: Pass socket emitter
             }
           );
 

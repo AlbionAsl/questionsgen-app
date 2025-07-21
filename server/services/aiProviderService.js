@@ -176,23 +176,38 @@ class AIProviderService {
   async generateWithGemini(prompt, modelId, geminiService, options) {
     console.log(`[AIProvider] Generating with Gemini model: ${modelId}`);
     
-    // Choose between function calling and structured output based on model
+    // ENHANCED: Try structured output first for better reliability
     let result;
     
     if (modelId === 'gemini-2.5-pro') {
-      // Use function calling for Pro model
-      console.log('[AIProvider] Using Gemini function calling approach');
-      result = await geminiService.generateQuestions(prompt, modelId);
+      console.log('[AIProvider] Using Gemini-2.5-Pro with structured output approach (more reliable)');
+      try {
+        // Try structured output first (more reliable)
+        result = await geminiService.generateQuestionsStructured(prompt, modelId);
+      } catch (structuredError) {
+        console.log('[AIProvider] Structured output failed, falling back to function calling');
+        console.log('[AIProvider] Structured error:', structuredError.message);
+        
+        // Fallback to function calling
+        try {
+          result = await geminiService.generateQuestions(prompt, modelId);
+        } catch (functionError) {
+          console.error('[AIProvider] Both structured and function calling failed');
+          throw new Error(`Gemini Pro failed with both methods: ${functionError.message}`);
+        }
+      }
     } else {
+      console.log('[AIProvider] Using Gemini Flash with structured output approach');
       // Use structured output for Flash model (more reliable for structured data)
-      console.log('[AIProvider] Using Gemini structured output approach');
       result = await geminiService.generateQuestionsStructured(prompt, modelId);
     }
     
-    if (result.success) {
+    if (result.success && result.questions && result.questions.length > 0) {
+      console.log(`[AIProvider] Gemini successfully generated ${result.questions.length} questions`);
       return result.questions;
     } else {
-      throw new Error('Gemini did not return questions in expected format');
+      console.error('[AIProvider] Gemini result:', result);
+      throw new Error('Gemini did not return valid questions');
     }
   }
 

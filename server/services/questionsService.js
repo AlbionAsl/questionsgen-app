@@ -45,6 +45,21 @@ class QuestionService {
       amountOfQuestions
     });
 
+    // NEW: Emit prompt data for progress monitoring (if socket context available)
+    if (options.socketEmitter) {
+      options.socketEmitter('promptGenerated', {
+        sectionTitle: options.sectionTitle || 'Unknown Section',
+        pageTitle,
+        animeName,
+        model: options.model || 'gpt-4o-mini',
+        promptLength: prompt.length,
+        contentLength: content.length,
+        questionsRequested: amountOfQuestions,
+        fullPrompt: prompt,
+        timestamp: new Date().toISOString()
+      });
+    }
+
     try {
       console.log(`[Questions] Making AI API call with improved prompt structure...`);
       console.log(`[Questions] Using AI Provider Service with model: ${options.model || 'gpt-4o-mini'}`);
@@ -238,21 +253,6 @@ Generate ${amountOfQuestions} multiple-choice questions based on the 'FANDOM WIK
         const data = doc.data();
         const newTotalAnswers = (data.totalAnswers || 0) + 1;
         const newCorrectAnswers = (data.correctAnswers || 0) + (wasCorrect ? 1 : 0);
-        
-        // Calculate accuracy rate on the fly (not stored)
-        const accuracyRate = newCorrectAnswers / newTotalAnswers;
-        
-        // Auto-adjust difficulty based on accuracy rate
-        let newDifficulty = data.difficulty || 0;
-        if (newTotalAnswers >= 10) { // Only adjust after enough data
-          if (accuracyRate > 0.8) {
-            newDifficulty = 0; // Easy
-          } else if (accuracyRate > 0.5) {
-            newDifficulty = 1; // Medium
-          } else {
-            newDifficulty = 2; // Hard
-          }
-        }
         
         transaction.update(questionRef, {
           totalAnswers: newTotalAnswers,

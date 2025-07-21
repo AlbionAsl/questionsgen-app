@@ -2,10 +2,9 @@ Create challenging and fun multiple-choice questions with one correct answer and
 
 ## Rules:
 - Use specific names of characters, groups, locations, and abilities when possible
-- Incorporate the 'category' if that helps to add context to the question
 - Make wrong answers seem reasonable (not obviously fake)
 - Keep language natural and conversational
-- Never say "according to the text" or hint at the right answer
+- NEVER NEVER say "according to the text" or something similar
 - Mix up where you put the correct answer (A, B, C, or D)
 - Review your questions to make sure they're high quality
 - It's okay to test memory of specific details

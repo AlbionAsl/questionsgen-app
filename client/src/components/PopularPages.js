@@ -85,7 +85,7 @@ export default function PopularPages({ onStart }) {
   const promptPresets = [
     {
       name: 'Challenging & Specific (Default)',
-      value: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
+      value: 'Create challenging and fun multiple-choice questions with one correct answer and three wrong but believable options.\n\n## Rules:\n- Use specific names of characters, groups, locations, and abilities when possible\n- Make wrong answers seem reasonable (not obviously fake)\n- Keep language natural and conversational\n- NEVER NEVER say "according to the text" or something similar\n- Mix up where you put the correct answer (A, B, C, or D)\n- Review your questions to make sure they\'re high quality\n- It\'s okay to test memory of specific details\n- Avoid asking questions that don\'t have any specific details that can happen at any time during the story\n\n## What makes good questions:\n- Use your broader anime knowledge if you\'re confident, but base it on the text\n- Include specific character names, jutsu/abilities, locations, and plot details\n- Wrong answers should be from the same universe or similar situations\n- Make questions challenging but fair\n\n## Format:\nWrite a clear question, then list A, B, C, D options.'
     },
     {
       name: 'Trivia Style',
