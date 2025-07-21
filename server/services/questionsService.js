@@ -136,69 +136,139 @@ ${content}
     }
   }
 
-  async writeQuestionsToFirestore(questions, animeId, metadata = {}) {
-    const startTime = Date.now();
-    console.log(`[Questions] Writing ${questions.length} questions to Firestore...`);
-    
-    if (!questions || questions.length === 0) {
-      console.warn('[Questions] No questions to write');
-      return 0;
-    }
+// server/services/questionsService.js - FIXED VERSION
+// Key changes: options as object, added usage tracking fields, fixed accuracyRate
 
-    const db = getDb();
-    const batch = db.batch();
+// server/services/questionsService.js - CORRECTED writeQuestionsToFirestore method
+// This matches what's actually in Firebase
 
-    questions.forEach((q, index) => {
-      try {
-        const docRef = db.collection('questions').doc();
-        batch.set(docRef, {
-          id: docRef.id,
-          animeId: animeId,
-          animeName: metadata.animeName || '',
-          category: metadata.category || '',
-          pageTitle: metadata.pageTitle || '',
-          sectionTitle: metadata.sectionTitle || '', // NEW: Section information
-          question: q.question,
-          options: q.options,
-          correctAnswer: q.correctAnswer,
-          // Enhanced generation metadata
-          generationMetadata: {
-            model: metadata.model || 'gpt-4o-mini',
-            promptInstructions: metadata.promptInstructions || 'default',
-            generatedAt: new Date().toISOString(),
-            generationVersion: '2.1', // Updated version for section-based generation
-            sectionProcessed: true, // NEW: Track section-based processing
-            sectionTitle: metadata.sectionTitle || '' // NEW: Section context
-          },
-          // Question analytics
-          difficulty: 0, // Can be updated based on user feedback
-          dislikes: 0,
-          likes: 0,
-          totalAnswers: 0,
-          correctAnswers: 0,
-          accuracyRate: 0, // Will be calculated: correctAnswers / totalAnswers
-          // Random field for random sampling
-          random: Math.random(),
-          // Timestamps
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      } catch (error) {
-        console.error(`[Questions] Error preparing question ${index + 1}:`, error.message);
-        throw error;
-      }
-    });
-
-    try {
-      await batch.commit();
-      const duration = Date.now() - startTime;
-      console.log(`[Questions] Successfully wrote ${questions.length} questions in ${duration}ms`);
-      return questions.length;
-    } catch (error) {
-      console.error('[Questions] Error writing to Firestore:', error.message);
-      throw new Error(`Failed to write questions to database: ${error.message}`);
-    }
+async writeQuestionsToFirestore(questions, animeId, metadata = {}) {
+  const startTime = Date.now();
+  console.log(`[Questions] Writing ${questions.length} questions to Firestore...`);
+  
+  if (!questions || questions.length === 0) {
+    console.warn('[Questions] No questions to write');
+    return 0;
   }
+
+  const db = getDb();
+  const batch = db.batch();
+
+  questions.forEach((q, index) => {
+    try {
+      const docRef = db.collection('questions').doc();
+      
+      // The questions already come with options in the correct object format
+      // from the OpenAI response parsing, so we don't need to convert them
+      
+      batch.set(docRef, {
+        id: docRef.id,
+        animeId: animeId, // Number type
+        animeName: metadata.animeName || '',
+        category: metadata.category || '', // Wiki category from fandom
+        pageTitle: metadata.pageTitle || '',
+        // sectionTitle is stored inside generationMetadata, not at root level
+        question: q.question,
+        options: q.options, // Already in object format {"0": "...", "1": "...", etc}
+        correctAnswer: q.correctAnswer,
+        
+        // Generation metadata
+        generationMetadata: {
+          model: metadata.model || 'gpt-4o-mini',
+          promptInstructions: metadata.promptInstructions || 'default',
+          generatedAt: new Date().toISOString(),
+          generationVersion: '2.1',
+          sectionProcessed: true,
+          sectionTitle: metadata.sectionTitle || '' // Section title goes here
+        },
+        
+        // Question analytics fields
+        difficulty: 0, // 0=Easy, 1=Medium, 2=Hard (auto-adjusted based on user performance)
+        dislikes: 0,
+        likes: 0,
+        totalAnswers: 0,
+        correctAnswers: 0,
+        // NO accuracyRate field - it's calculated on the fly when needed
+        
+        // Usage tracking for the quiz system
+        timesUsed: 0,
+        lastUsed: null, // Will be set to timestamp string when first used
+        usedDates: [], // Array of YYYY-MM-DD dates
+        categories: [], // IMPORTANT: Quiz categories where used (e.g., ["all", "123"])
+        
+        // Random field for random sampling
+        random: Math.random(),
+        
+        // Timestamp
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        // NO updatedAt unless the question is actually updated later
+      });
+    } catch (error) {
+      console.error(`[Questions] Error preparing question ${index + 1}:`, error.message);
+      throw error;
+    }
+  });
+
+  try {
+    await batch.commit();
+    const duration = Date.now() - startTime;
+    console.log(`[Questions] Successfully wrote ${questions.length} questions in ${duration}ms`);
+    return questions.length;
+  } catch (error) {
+    console.error('[Questions] Error writing to Firestore:', error.message);
+    throw new Error(`Failed to write questions to database: ${error.message}`);
+  }
+}
+
+// When updating question analytics (in quiz app after user answers)
+async updateQuestionAnalytics(questionId, wasCorrect) {
+  const db = getDb();
+  
+  try {
+    const questionRef = db.collection('questions').doc(questionId);
+    
+    await db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(questionRef);
+      
+      if (!doc.exists) {
+        throw new Error('Question not found');
+      }
+      
+      const data = doc.data();
+      const newTotalAnswers = (data.totalAnswers || 0) + 1;
+      const newCorrectAnswers = (data.correctAnswers || 0) + (wasCorrect ? 1 : 0);
+      
+      // Calculate accuracy rate on the fly (not stored)
+      const accuracyRate = newCorrectAnswers / newTotalAnswers;
+      
+      // Auto-adjust difficulty based on accuracy rate
+      let newDifficulty = data.difficulty || 0;
+      if (newTotalAnswers >= 10) { // Only adjust after enough data
+        if (accuracyRate > 0.8) {
+          newDifficulty = 0; // Easy
+        } else if (accuracyRate > 0.5) {
+          newDifficulty = 1; // Medium
+        } else {
+          newDifficulty = 2; // Hard
+        }
+      }
+      
+      transaction.update(questionRef, {
+        totalAnswers: newTotalAnswers,
+        correctAnswers: newCorrectAnswers,
+        difficulty: newDifficulty,
+        // Don't store accuracyRate - calculate it when needed
+        // Only add updatedAt when actually updating
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    
+    console.log(`[Questions] Updated analytics for question ${questionId}`);
+  } catch (error) {
+    console.error('Error updating question analytics:', error.message);
+    throw error;
+  }
+}
 
   async getQuestions(filters = {}) {
     const db = getDb();

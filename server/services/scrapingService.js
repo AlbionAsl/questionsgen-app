@@ -78,8 +78,8 @@ class ScrapingService {
 
       const unwantedSectionIds = [
         'References', 'Navigation', 'External_Links', 'See_also',
-        'Site_Navigation', 'Gallery', 'Merchandise', 'Major_Battles',
-        'Real-life_Counterpart', 'Credits', 'Trivia', 'Notes'
+        'Site_Navigation', 'Gallery', 'Merchandise',
+        'Real-life_Counterpart', 'Credits', 'Notes'
       ];
 
       // Remove unwanted sections more aggressively
