@@ -41,7 +41,8 @@ class ScrapingService {
     }
   }
 
-  async fetchPageContent(title, topic) {
+  // ENHANCED: Now accepts options including skipSections
+  async fetchPageContent(title, topic, options = {}) {
     const url = this.createFandomUrl(topic);
     const params = {
       action: 'parse',
@@ -76,65 +77,22 @@ class ScrapingService {
       // Remove edit links but keep the content structure
       $('span.mw-editsection').remove();
 
-      const unwantedSectionIds = [
-        'References', 'Navigation', 'External_Links', 'See_also',
-        'Site_Navigation', 'Gallery', 'Merchandise',
-        'Real-life_Counterpart', 'Credits', 'Notes'
-      ];
-
-      // Remove unwanted sections more aggressively
-      unwantedSectionIds.forEach((sectionId) => {
-        // Try multiple selectors for section removal
-        $(`#${sectionId}, #${sectionId.toLowerCase()}, [id*="${sectionId}"]`).each(function() {
-          const $header = $(this).closest('h1, h2, h3, h4, h5, h6');
-          if ($header.length > 0) {
-            // Remove everything until the next header of same or higher level
-            const headerLevel = parseInt($header[0].tagName.charAt(1));
-            let $current = $header.next();
-            
-            while ($current.length > 0) {
-              const $next = $current.next();
-              const currentTag = $current[0].tagName?.toLowerCase();
-              
-              // Stop if we hit another header of same or higher level
-              if (currentTag && currentTag.match(/^h[1-6]$/)) {
-                const currentLevel = parseInt(currentTag.charAt(1));
-                if (currentLevel <= headerLevel) {
-                  break;
-                }
-              }
-              
-              $current.remove();
-              $current = $next;
-            }
-            
-            // Remove the header itself
-            $header.remove();
-          }
-        });
+      // ENHANCED: Use configurable skip sections instead of hardcoded list
+      const skipSections = options.skipSections || [];
+      
+      if (skipSections.length > 0) {
+        console.log(`[Content] Applying section filtering: ${skipSections.length} section types to skip`);
+        console.log(`[Content] Skip list: ${skipSections.slice(0, 10).join(', ')}${skipSections.length > 10 ? '...' : ''}`);
         
-        // Also try span-based selectors for Fandom wikis
-        $(`span.mw-headline#${sectionId}, span.mw-headline#${sectionId.toLowerCase()}`).each(function () {
-          const header = $(this).closest('h1, h2, h3, h4, h5, h6');
-          if (header.length > 0) {
-            const headerLevel = parseInt(header[0].tagName.charAt(1));
-            let next = header.next();
-            
-            while (next.length > 0 && !next.is(`h1, h2, h3, h4, h5, h6`)) {
-              const toRemove = next;
-              next = next.next();
-              toRemove.remove();
-            }
-            
-            header.remove();
-          }
-        });
-      });
+        this.removeUnwantedSections($, skipSections);
+      } else {
+        console.log(`[Content] No section filtering applied - processing all sections`);
+      }
 
       console.log(`[Content] After cleanup: h1=${$('h1').length}, h2=${$('h2').length}, h3=${$('h3').length}, p=${$('p').length}`);
 
       // Extract sections with their structure
-      return this.extractSections($, title);
+      return this.extractSections($, title, skipSections);
 
     } catch (error) {
       console.error(`Error fetching page '${title}':`, error.message);
@@ -142,9 +100,172 @@ class ScrapingService {
     }
   }
 
-  // NEW: Extract sections from parsed HTML
-  extractSections($, pageTitle) {
+  // NEW: Enhanced method to remove unwanted sections with better pattern matching
+  removeUnwantedSections($, skipSections) {
+    let removedSections = 0;
+    const normalizedSkipSections = skipSections.map(s => s.toLowerCase().trim());
+    
+    console.log(`[SectionFilter] Starting section removal with ${skipSections.length} patterns...`);
+
+    // Multiple approaches to find and remove sections
+    
+    // 1. Direct ID matching (most common in Fandom wikis)
+    normalizedSkipSections.forEach((sectionPattern) => {
+      const variations = [
+        sectionPattern,
+        sectionPattern.replace(/\s+/g, '_'),
+        sectionPattern.replace(/\s+/g, '-'),
+        sectionPattern.replace(/\s+/g, '')
+      ];
+
+      variations.forEach((variation) => {
+        // Try multiple selectors for each variation
+        const selectors = [
+          `#${variation}`,
+          `#${variation.toLowerCase()}`,
+          `[id*="${variation}"]`,
+          `[id*="${variation.toLowerCase()}"]`
+        ];
+
+        selectors.forEach(selector => {
+          $(selector).each(function() {
+            const $element = $(this);
+            const $header = $element.closest('h1, h2, h3, h4, h5, h6');
+            
+            if ($header.length > 0) {
+              const headerText = $header.text().toLowerCase().trim();
+              console.log(`[SectionFilter] Found section header via ID: "${headerText}"`);
+              
+              if (this.shouldSkipSection(headerText, normalizedSkipSections)) {
+                this.removeSectionContent($, $header);
+                removedSections++;
+              }
+            }
+          });
+        });
+      });
+    });
+
+    // 2. Span-based headline matching (common in MediaWiki/Fandom)
+    $('span.mw-headline').each((index, element) => {
+      const $span = $(element);
+      const headlineText = $span.text().toLowerCase().trim();
+      
+      if (this.shouldSkipSection(headlineText, normalizedSkipSections)) {
+        console.log(`[SectionFilter] Removing section by headline: "${headlineText}"`);
+        const $header = $span.closest('h1, h2, h3, h4, h5, h6');
+        if ($header.length > 0) {
+          this.removeSectionContent($, $header);
+          removedSections++;
+        }
+      }
+    });
+
+    // 3. Direct header text matching (fallback)
+    $('h1, h2, h3, h4, h5, h6').each((index, element) => {
+      const $header = $(element);
+      const headerText = $header.text().toLowerCase().trim()
+        .replace(/\[edit\]/gi, '') // Remove [edit] links
+        .replace(/\[[^\]]*\]/g, '') // Remove other bracketed content
+        .trim();
+      
+      if (headerText && this.shouldSkipSection(headerText, normalizedSkipSections)) {
+        console.log(`[SectionFilter] Removing section by direct header match: "${headerText}"`);
+        this.removeSectionContent($, $header);
+        removedSections++;
+      }
+    });
+
+    console.log(`[SectionFilter] Removed ${removedSections} sections total`);
+  }
+
+  // NEW: Enhanced method to determine if a section should be skipped
+  shouldSkipSection(sectionText, normalizedSkipSections) {
+    const cleanSectionText = sectionText.toLowerCase().trim();
+    
+    return normalizedSkipSections.some(skipPattern => {
+      // Exact match
+      if (cleanSectionText === skipPattern) {
+        return true;
+      }
+      
+      // Contains match (for partial matching)
+      if (cleanSectionText.includes(skipPattern) || skipPattern.includes(cleanSectionText)) {
+        return true;
+      }
+      
+      // Word boundary matching (more precise)
+      const skipWords = skipPattern.split(/\s+/);
+      const sectionWords = cleanSectionText.split(/\s+/);
+      
+      // If all words from skip pattern are found in section text
+      if (skipWords.length <= sectionWords.length) {
+        const wordsMatch = skipWords.every(skipWord => 
+          sectionWords.some(sectionWord => 
+            sectionWord.includes(skipWord) || skipWord.includes(sectionWord)
+          )
+        );
+        if (wordsMatch) {
+          return true;
+        }
+      }
+      
+      // Common variations and synonyms
+      const synonymMap = {
+        'references': ['reference', 'refs', 'citations', 'sources'],
+        'navigation': ['nav', 'site navigation', 'site nav'],
+        'external links': ['external link', 'links', 'see also'],
+        'see also': ['see', 'also see', 'related'],
+        'gallery': ['images', 'pictures', 'photos'],
+        'trivia': ['facts', 'did you know', 'interesting facts'],
+        'behind the scenes': ['production', 'development', 'making of'],
+        'voice actors': ['voice cast', 'cast', 'actors', 'voice'],
+        'non-canon': ['non canon', 'noncanon', 'filler']
+      };
+      
+      // Check if section matches any synonyms
+      for (const [mainTerm, synonyms] of Object.entries(synonymMap)) {
+        if (skipPattern.includes(mainTerm) || synonyms.some(syn => skipPattern.includes(syn))) {
+          if (cleanSectionText.includes(mainTerm) || synonyms.some(syn => cleanSectionText.includes(syn))) {
+            return true;
+          }
+        }
+      }
+      
+      return false;
+    });
+  }
+
+  // NEW: Enhanced method to remove section content
+  removeSectionContent($, $header) {
+    const headerLevel = parseInt($header[0].tagName.charAt(1));
+    let $current = $header.next();
+    
+    // Remove everything until the next header of same or higher level
+    while ($current.length > 0) {
+      const $next = $current.next();
+      const currentTag = $current[0].tagName?.toLowerCase();
+      
+      // Stop if we hit another header of same or higher level
+      if (currentTag && currentTag.match(/^h[1-6]$/)) {
+        const currentLevel = parseInt(currentTag.charAt(1));
+        if (currentLevel <= headerLevel) {
+          break;
+        }
+      }
+      
+      $current.remove();
+      $current = $next;
+    }
+    
+    // Remove the header itself
+    $header.remove();
+  }
+
+  // ENHANCED: Extract sections with skip sections awareness
+  extractSections($, pageTitle, skipSections = []) {
     console.log(`[Sections] Extracting sections from: ${pageTitle}`);
+    console.log(`[Sections] Skip sections active: ${skipSections.length > 0 ? 'Yes' : 'No'}`);
     
     const sections = [];
     let currentSection = {
@@ -257,11 +378,27 @@ class ScrapingService {
       console.log(`[Sections] Section ${index + 1}: "${section.title}" (${section.wordCount} words)`);
     });
     
+    // Additional filtering check - remove sections that match skip patterns but weren't caught during HTML parsing
+    const filteredSections = sections.filter(section => {
+      const normalizedSkipSections = (skipSections || []).map(s => s.toLowerCase().trim());
+      const shouldSkip = this.shouldSkipSection(section.title, normalizedSkipSections);
+      
+      if (shouldSkip) {
+        console.log(`[Sections] Post-processing filter: Removing section "${section.title}"`);
+        return false;
+      }
+      return true;
+    });
+
+    if (filteredSections.length !== sections.length) {
+      console.log(`[Sections] Post-processing removed ${sections.length - filteredSections.length} additional sections`);
+    }
+    
     // Process sections according to word count rules
-    return this.processSections(sections);
+    return this.processSections(filteredSections);
   }
 
-  // NEW: Process sections according to word count rules
+  // Process sections according to word count rules (unchanged)
   processSections(rawSections) {
     console.log(`[Sections] Processing ${rawSections.length} raw sections...`);
     
@@ -321,7 +458,7 @@ class ScrapingService {
     return processedSections;
   }
 
-  // NEW: Finalize section with question count calculation
+  // Finalize section with question count calculation (unchanged)
   finalizeSection(section) {
     const questionCount = Math.ceil(section.wordCount / 100);
     return {
@@ -330,19 +467,19 @@ class ScrapingService {
     };
   }
 
-  // NEW: Count words in text
+  // Count words in text (unchanged)
   countWords(text) {
     if (!text || typeof text !== 'string') return 0;
     return text.trim().split(/\s+/).filter(word => word.length > 0).length;
   }
 
-  // Generate a unique identifier for a section
+  // Generate a unique identifier for a section (unchanged)
   generateSectionId(category, pageTitle, sectionTitle, fandomName) {
     const data = `${fandomName}_${category}_${pageTitle}_${sectionTitle}`;
     return crypto.createHash('md5').update(data).digest('hex');
   }
 
-  // Check if section was already processed using Firestore
+  // Check if section was already processed using Firestore (unchanged)
   async isSectionProcessed(sectionId, fandomName) {
     try {
       const db = getDb();
@@ -355,7 +492,7 @@ class ScrapingService {
     }
   }
 
-  // Mark section as processed in Firestore
+  // Mark section as processed in Firestore (unchanged)
   async markSectionAsProcessed(sectionId, fandomName, metadata = {}) {
     try {
       const db = getDb();
@@ -376,6 +513,7 @@ class ScrapingService {
     }
   }
 
+  // Remaining methods unchanged...
   async getAvailableCategories(fandomWikiName, searchTerm = '', limit = 1000, offset = 0) {
     const url = this.createFandomUrl(fandomWikiName);
     const params = {
@@ -432,7 +570,7 @@ class ScrapingService {
     }
   }
 
-  // Search categories with better filtering
+  // Search categories with better filtering (unchanged)
   async searchCategories(fandomWikiName, searchTerm, limit = 100) {
     if (!searchTerm || searchTerm.length < 2) {
       return { categories: [], hasMore: false };
@@ -462,7 +600,7 @@ class ScrapingService {
     }
   }
 
-  // NEW: Get popular pages from Special:MostRevisions
+  // Get popular pages from Special:MostRevisions (unchanged)
   async getPopularPages(fandomWikiName, limit = 100) {
     console.log(`[PopularPages] Fetching popular pages for ${fandomWikiName}...`);
     
@@ -476,7 +614,7 @@ class ScrapingService {
     }
   }
 
-  // Scrape the Special:MostRevisions page directly
+  // Scrape the Special:MostRevisions page directly (unchanged)
   async getPopularPagesViaScraping(fandomWikiName, limit = 100) {
     console.log(`[PopularPages] Scraping Special:MostRevisions page...`);
     
@@ -639,7 +777,7 @@ class ScrapingService {
     }
   }
 
-  // Get processing statistics for a fandom
+  // Get processing statistics for a fandom (unchanged)
   async getProcessingStats(fandomName) {
     try {
       const db = getDb();
@@ -702,7 +840,7 @@ class ScrapingService {
     }
   }
 
-  // Clean up old processed chunks (optional maintenance function)
+  // Clean up old processed chunks (optional maintenance function) (unchanged)
   async cleanupOldChunks(olderThanDays = 30) {
     try {
       const db = getDb();

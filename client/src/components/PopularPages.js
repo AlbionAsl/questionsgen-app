@@ -10,7 +10,35 @@ export default function PopularPages({ onStart }) {
     maxApiCalls: 10,
     questionsPerChunk: 4,
     openaiModel: 'gpt-4o-mini',
-    promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
+    promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.',
+    skipSections: [ // NEW: Default sections to skip
+      'References',
+      'Navigation', 
+      'Site Navigation',
+      'External Links',
+      'See also',
+      'Gallery',
+      'Merchandise',
+      'Real-life Counterpart',
+      'Credits',
+      'Notes',
+      'Trivia',
+      'Behind the Scenes',
+      'Production',
+      'Voice Actors',
+      'Cast',
+      'Staff',
+      'Development',
+      'Reception',
+      'Legacy',
+      'Cultural Impact',
+      'Adaptations',
+      'Non-canon',
+      'Filler',
+      'Movies',
+      'OVA',
+      'Spin-offs'
+    ]
   });
 
   const [animeSearchResults, setAnimeSearchResults] = useState([]);
@@ -24,6 +52,7 @@ export default function PopularPages({ onStart }) {
   const [processingStats, setProcessingStats] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [aiProviderStats, setAiProviderStats] = useState(null);
+  const [customSkipSection, setCustomSkipSection] = useState(''); // NEW: For adding custom sections
 
   // Default models - will be replaced by dynamic loading
   const defaultModels = [
@@ -102,6 +131,51 @@ export default function PopularPages({ onStart }) {
     {
       name: 'Technical Details',
       value: 'Create detailed questions about abilities, techniques, power systems, and world-building elements. Focus on specific mechanics and technical aspects of the anime universe.'
+    }
+  ];
+
+  // NEW: Section skip presets for different types of content
+  const sectionSkipPresets = [
+    {
+      name: 'Default (Recommended)',
+      description: 'Skips navigation, references, production info, and other non-story content',
+      sections: [
+        'References', 'Navigation', 'Site Navigation', 'External Links', 'See also',
+        'Gallery', 'Merchandise', 'Real-life Counterpart', 'Credits', 'Notes',
+        'Trivia', 'Behind the Scenes', 'Production', 'Voice Actors', 'Cast',
+        'Staff', 'Development', 'Reception', 'Legacy', 'Cultural Impact',
+        'Adaptations', 'Non-canon', 'Filler', 'Movies', 'OVA', 'Spin-offs'
+      ]
+    },
+    {
+      name: 'Story Content Only',
+      description: 'Only includes main story content, skips everything else',
+      sections: [
+        'References', 'Navigation', 'Site Navigation', 'External Links', 'See also',
+        'Gallery', 'Merchandise', 'Real-life Counterpart', 'Credits', 'Notes',
+        'Trivia', 'Behind the Scenes', 'Production', 'Voice Actors', 'Cast',
+        'Staff', 'Development', 'Reception', 'Legacy', 'Cultural Impact',
+        'Adaptations', 'Non-canon', 'Filler', 'Movies', 'OVA', 'Spin-offs',
+        'Anime', 'Manga', 'Light Novel', 'Game', 'Merchandise', 'Media',
+        'Appearances', 'Etymology', 'Translation', 'Dub'
+      ]
+    },
+    {
+      name: 'Canon Only',
+      description: 'Skips non-canon content like filler, movies, OVAs',
+      sections: [
+        'References', 'Navigation', 'Site Navigation', 'External Links', 'See also',
+        'Gallery', 'Merchandise', 'Real-life Counterpart', 'Credits', 'Notes',
+        'Non-canon', 'Filler', 'Movies', 'OVA', 'Spin-offs', 'Anime-only',
+        'Manga-only', 'Light Novel-only', 'Game-only'
+      ]
+    },
+    {
+      name: 'Minimal Filtering',
+      description: 'Only skips obvious navigation and reference sections',
+      sections: [
+        'References', 'Navigation', 'Site Navigation', 'External Links', 'See also', 'Credits'
+      ]
     }
   ];
 
@@ -238,6 +312,37 @@ export default function PopularPages({ onStart }) {
     }));
   };
 
+  // NEW: Section skip management functions
+  const handleSkipSectionAdd = (sectionName) => {
+    if (sectionName && !formData.skipSections.includes(sectionName)) {
+      setFormData(prev => ({
+        ...prev,
+        skipSections: [...prev.skipSections, sectionName]
+      }));
+    }
+  };
+
+  const handleSkipSectionRemove = (sectionName) => {
+    setFormData(prev => ({
+      ...prev,
+      skipSections: prev.skipSections.filter(s => s !== sectionName)
+    }));
+  };
+
+  const handleSkipSectionPreset = (preset) => {
+    setFormData(prev => ({
+      ...prev,
+      skipSections: [...preset.sections]
+    }));
+  };
+
+  const handleCustomSkipSectionAdd = () => {
+    if (customSkipSection.trim()) {
+      handleSkipSectionAdd(customSkipSection.trim());
+      setCustomSkipSection('');
+    }
+  };
+
   const handleSubmit = async () => {
     if (!formData.animeName || !formData.fandomWikiName || formData.selectedPages.length === 0) {
       setError('Please select anime, wiki, and at least one page');
@@ -256,7 +361,8 @@ export default function PopularPages({ onStart }) {
         body: JSON.stringify({
           ...formData,
           categories: [], // No categories for popular pages
-          individualPages: formData.selectedPages // Use selected pages as individual pages
+          individualPages: formData.selectedPages, // Use selected pages as individual pages
+          skipSections: formData.skipSections // NEW: Pass skip sections
         }),
       });
 
@@ -386,6 +492,90 @@ export default function PopularPages({ onStart }) {
             <p className="mt-1 text-xs text-gray-500">
               The subdomain of the Fandom wiki (e.g., for https://naruto.fandom.com, enter "naruto")
             </p>
+          </div>
+
+          {/* NEW: Section Filtering Configuration */}
+          <div className="border-t pt-6">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">🚫 Section Filtering</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Choose which wiki sections to skip when generating questions. Filtering helps focus on story content and avoids generating questions about navigation, references, or production details.
+            </p>
+
+            {/* Preset Buttons */}
+            <div className="mb-4">
+              <p className="text-sm font-medium text-gray-700 mb-2">Quick Presets:</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {sectionSkipPresets.map((preset) => (
+                  <button
+                    key={preset.name}
+                    onClick={() => handleSkipSectionPreset(preset)}
+                    className="p-3 text-left border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="font-medium text-sm text-gray-900">{preset.name}</div>
+                    <div className="text-xs text-gray-500 mt-1">{preset.description}</div>
+                    <div className="text-xs text-gray-400 mt-1">Skips {preset.sections.length} section types</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Custom Section Addition */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Add Custom Section to Skip:</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customSkipSection}
+                  onChange={(e) => setCustomSkipSection(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleCustomSkipSectionAdd()}
+                  placeholder="e.g., Voice Actors, Production Notes"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-sm"
+                />
+                <button
+                  onClick={handleCustomSkipSectionAdd}
+                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {/* Current Skip List */}
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-medium text-gray-700">
+                  Currently Skipping ({formData.skipSections.length} sections):
+                </label>
+                <button
+                  onClick={() => setFormData(prev => ({ ...prev, skipSections: [] }))}
+                  className="text-xs text-red-600 hover:text-red-800"
+                >
+                  Clear All
+                </button>
+              </div>
+              <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-md p-3 bg-gray-50">
+                {formData.skipSections.length === 0 ? (
+                  <p className="text-sm text-gray-500 italic">No sections being skipped</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {formData.skipSections.map((section) => (
+                      <span
+                        key={section}
+                        className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-red-100 text-red-800"
+                      >
+                        {section}
+                        <button
+                          onClick={() => handleSkipSectionRemove(section)}
+                          className="ml-1 text-red-600 hover:text-red-800 focus:outline-none"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Processing Stats */}
@@ -665,6 +855,11 @@ export default function PopularPages({ onStart }) {
                     <span className="ml-1 text-green-600">✨ Google Gemini</span>
                   )}
                 </p>
+                {formData.skipSections.length > 0 && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Skipping {formData.skipSections.length} section types during processing
+                  </p>
+                )}
               </div>
             )}
           </div>

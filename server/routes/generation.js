@@ -15,7 +15,8 @@ router.post('/start', async (req, res) => {
     maxApiCalls,
     questionsPerChunk,
     openaiModel,
-    promptInstructions
+    promptInstructions,
+    skipSections // NEW: Accept skip sections from UI
   } = req.body;
 
   const processId = Date.now().toString();
@@ -37,7 +38,8 @@ router.post('/start', async (req, res) => {
       startTime: new Date(),
       logs: [],
       openaiModel: openaiModel || 'gpt-4o-mini',
-      promptInstructions: promptInstructions || 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
+      promptInstructions: promptInstructions || 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.',
+      skipSections: skipSections || [] // NEW: Store skip sections in process
     };
 
     activeProcesses.set(processId, process);
@@ -51,6 +53,7 @@ router.post('/start', async (req, res) => {
       individualPages || [],
       maxApiCalls || 10,
       questionsPerChunk || 4,
+      skipSections || [], // NEW: Pass skip sections to generation function
       io
     );
 
@@ -179,7 +182,7 @@ router.get('/wiki/:wikiName/stats', async (req, res) => {
   }
 });
 
-// Main Generation Logic
+// Main Generation Logic - ENHANCED with skip sections
 async function generateQuestions(
   processId,
   animeName,
@@ -188,6 +191,7 @@ async function generateQuestions(
   individualPages,
   maxApiCalls,
   questionsPerChunk, // This is now used as a multiplier/fallback
+  skipSections, // NEW: Skip sections parameter
   io
 ) {
   const process = activeProcesses.get(processId);
@@ -204,6 +208,14 @@ async function generateQuestions(
   };
 
   try {
+    // Log skip sections configuration
+    if (skipSections && skipSections.length > 0) {
+      log(`Section filtering enabled: skipping ${skipSections.length} section types`, 'info');
+      log(`Skip sections: ${skipSections.slice(0, 5).join(', ')}${skipSections.length > 5 ? '...' : ''}`, 'info');
+    } else {
+      log('No section filtering configured - processing all sections', 'info');
+    }
+
     log(`Fetching AniList ID for ${animeName}...`);
     const animeData = await animeService.getAnimeId(animeName);
     if (!animeData) throw new Error(`Could not find AniList ID for ${animeName}`);
@@ -236,14 +248,19 @@ async function generateQuestions(
       }
 
       log(`Processing page: ${page.title}`);
-      const sections = await scrapingService.fetchPageContent(page.title, fandomWikiName);
+      
+      // NEW: Pass skip sections to fetchPageContent
+      const sections = await scrapingService.fetchPageContent(page.title, fandomWikiName, {
+        skipSections: skipSections || []
+      });
+      
       if (!sections || sections.length === 0) {
-        log(`No content sections found for page: ${page.title}`, 'warning');
+        log(`No content sections found for page: ${page.title} (possibly all sections were filtered out)`, 'warning');
         workDone++;
         continue;
       }
 
-      log(`Found ${sections.length} sections for processing.`);
+      log(`Found ${sections.length} sections for processing (after filtering).`);
 
       for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
         if (process.apiCallsMade >= maxApiCalls) {
@@ -320,6 +337,12 @@ async function generateQuestions(
     process.status = 'completed';
     process.duration = Date.now() - new Date(process.startTime).getTime();
     log(`Generation completed! Generated a total of ${process.questionsGenerated} questions.`, 'success');
+    
+    // NEW: Log final filtering statistics
+    if (skipSections && skipSections.length > 0) {
+      log(`Section filtering was active during this generation (${skipSections.length} section types filtered).`, 'info');
+    }
+    
     emit('completed', process);
 
   } catch (error) {
