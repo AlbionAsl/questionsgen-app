@@ -34,20 +34,16 @@ class QuestionService {
     const defaultInstructions = 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.';
     const promptInstructions = options.promptInstructions || defaultInstructions;
 
-    // Enhanced prompt with section context
-    const sectionContext = options.sectionTitle ? `This content is from the "${options.sectionTitle}" section of the page. ` : '';
-    
-    const prompt = `
-Generate ${amountOfQuestions} multiple-choice questions based on the following text. ${promptInstructions}
-
-${sectionContext}Focus on the specific information covered in this section.
-
-Text:
-For reference, this piece of text is about the Anime: ${animeName} ${
-      category ? `with category: ${category}` : ''
-    } and page title: ${pageTitle}${options.sectionTitle ? ` (Section: ${options.sectionTitle})` : ''}
-${content}
-`;
+    // NEW IMPROVED PROMPT STRUCTURE
+    const prompt = this.buildImprovedPrompt({
+      content,
+      animeName,
+      pageTitle,
+      sectionTitle: options.sectionTitle,
+      category,
+      promptInstructions,
+      amountOfQuestions
+    });
 
     const functions = [
       {
@@ -80,14 +76,14 @@ ${content}
     ];
 
     try {
-      console.log(`[Questions] Making OpenAI API call...`);
+      console.log(`[Questions] Making OpenAI API call with improved prompt structure...`);
       
       const response = await openaiService.createCompletion({
         model: options.model || 'gpt-4o-mini', // Use custom model
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful assistant that is an expert in generating fun, challenging, and diverse quiz questions.',
+            content: 'You are a helpful assistant that is an expert in generating fun, challenging, and diverse quiz questions. You will receive wiki text clearly marked with XML tags, followed by reference information and specific instructions.',
           },
           { role: 'user', content: prompt },
         ],
@@ -136,139 +132,183 @@ ${content}
     }
   }
 
-// server/services/questionsService.js - FIXED VERSION
-// Key changes: options as object, added usage tracking fields, fixed accuracyRate
+  // NEW METHOD: Build improved prompt with clear structure
+  buildImprovedPrompt({ content, animeName, pageTitle, sectionTitle, category, promptInstructions, amountOfQuestions }) {
+    console.log(`[Questions] Building improved prompt structure...`);
+    
+    // Clean the content to ensure it doesn't interfere with the XML-like tags
+    const cleanContent = content
+      .replace(/<FANDOM WIKI TEXT>/gi, '[FANDOM WIKI TEXT]') // Replace any existing tags to avoid conflicts
+      .replace(/<\/FANDOM WIKI TEXT>/gi, '[/FANDOM WIKI TEXT]')
+      .trim();
 
-// server/services/questionsService.js - CORRECTED writeQuestionsToFirestore method
-// This matches what's actually in Firebase
+    // Build reference information
+    let referenceInfo = `For reference, this piece of text is about the Anime: '${animeName}' with page title '${pageTitle}'`;
+    
+    // Add section info if available
+    if (sectionTitle) {
+      referenceInfo += ` (and section: '${sectionTitle}')`;
+    }
+    
+    // Add category if available and different from pageTitle
+    if (category && category !== 'Individual' && category !== pageTitle) {
+      referenceInfo += ` from category: '${category}'`;
+    }
 
-async writeQuestionsToFirestore(questions, animeId, metadata = {}) {
-  const startTime = Date.now();
-  console.log(`[Questions] Writing ${questions.length} questions to Firestore...`);
-  
-  if (!questions || questions.length === 0) {
-    console.warn('[Questions] No questions to write');
-    return 0;
+    // Build the complete prompt with the new structure
+    const prompt = `<FANDOM WIKI TEXT>
+
+${cleanContent}
+
+</FANDOM WIKI TEXT>
+
+${referenceInfo}
+
+${promptInstructions}
+
+Generate ${amountOfQuestions} multiple-choice questions based on the 'FANDOM WIKI TEXT'.`;
+
+    // Log the prompt structure for debugging (first 500 chars)
+    console.log(`[Questions] Prompt preview: ${prompt.substring(0, 500)}...`);
+    console.log(`[Questions] Total prompt length: ${prompt.length} characters`);
+    
+    return prompt;
   }
 
-  const db = getDb();
-  const batch = db.batch();
+  // server/services/questionsService.js - FIXED VERSION
+  // Key changes: options as object, added usage tracking fields, fixed accuracyRate
 
-  questions.forEach((q, index) => {
+  // server/services/questionsService.js - CORRECTED writeQuestionsToFirestore method
+  // This matches what's actually in Firebase
+
+  async writeQuestionsToFirestore(questions, animeId, metadata = {}) {
+    const startTime = Date.now();
+    console.log(`[Questions] Writing ${questions.length} questions to Firestore...`);
+    
+    if (!questions || questions.length === 0) {
+      console.warn('[Questions] No questions to write');
+      return 0;
+    }
+
+    const db = getDb();
+    const batch = db.batch();
+
+    questions.forEach((q, index) => {
+      try {
+        const docRef = db.collection('questions').doc();
+        
+        // The questions already come with options in the correct object format
+        // from the OpenAI response parsing, so we don't need to convert them
+        
+        batch.set(docRef, {
+          id: docRef.id,
+          animeId: animeId, // Number type
+          animeName: metadata.animeName || '',
+          category: metadata.category || '', // Wiki category from fandom
+          pageTitle: metadata.pageTitle || '',
+          // sectionTitle is stored inside generationMetadata, not at root level
+          question: q.question,
+          options: q.options, // Already in object format {"0": "...", "1": "...", etc}
+          correctAnswer: q.correctAnswer,
+          
+          // Generation metadata
+          generationMetadata: {
+            model: metadata.model || 'gpt-4o-mini',
+            promptInstructions: metadata.promptInstructions || 'default',
+            generatedAt: new Date().toISOString(),
+            generationVersion: '2.1',
+            sectionProcessed: true,
+            sectionTitle: metadata.sectionTitle || '', // Section title goes here
+            promptStructure: 'promt structue & XML tags' // NEW: Track prompt structure version
+          },
+          
+          // Question analytics fields
+          difficulty: 0, // 0=Easy, 1=Medium, 2=Hard (auto-adjusted based on user performance)
+          dislikes: 0,
+          likes: 0,
+          totalAnswers: 0,
+          correctAnswers: 0,
+          // NO accuracyRate field - it's calculated on the fly when needed
+          
+          // Usage tracking for the quiz system
+          timesUsed: 0,
+          lastUsed: null, // Will be set to timestamp string when first used
+          usedDates: [], // Array of YYYY-MM-DD dates
+          categories: [], // IMPORTANT: Quiz categories where used (e.g., ["all", "123"])
+          
+          // Random field for random sampling
+          random: Math.random(),
+          
+          // Timestamp
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          // NO updatedAt unless the question is actually updated later
+        });
+      } catch (error) {
+        console.error(`[Questions] Error preparing question ${index + 1}:`, error.message);
+        throw error;
+      }
+    });
+
     try {
-      const docRef = db.collection('questions').doc();
-      
-      // The questions already come with options in the correct object format
-      // from the OpenAI response parsing, so we don't need to convert them
-      
-      batch.set(docRef, {
-        id: docRef.id,
-        animeId: animeId, // Number type
-        animeName: metadata.animeName || '',
-        category: metadata.category || '', // Wiki category from fandom
-        pageTitle: metadata.pageTitle || '',
-        // sectionTitle is stored inside generationMetadata, not at root level
-        question: q.question,
-        options: q.options, // Already in object format {"0": "...", "1": "...", etc}
-        correctAnswer: q.correctAnswer,
-        
-        // Generation metadata
-        generationMetadata: {
-          model: metadata.model || 'gpt-4o-mini',
-          promptInstructions: metadata.promptInstructions || 'default',
-          generatedAt: new Date().toISOString(),
-          generationVersion: '2.1',
-          sectionProcessed: true,
-          sectionTitle: metadata.sectionTitle || '' // Section title goes here
-        },
-        
-        // Question analytics fields
-        difficulty: 0, // 0=Easy, 1=Medium, 2=Hard (auto-adjusted based on user performance)
-        dislikes: 0,
-        likes: 0,
-        totalAnswers: 0,
-        correctAnswers: 0,
-        // NO accuracyRate field - it's calculated on the fly when needed
-        
-        // Usage tracking for the quiz system
-        timesUsed: 0,
-        lastUsed: null, // Will be set to timestamp string when first used
-        usedDates: [], // Array of YYYY-MM-DD dates
-        categories: [], // IMPORTANT: Quiz categories where used (e.g., ["all", "123"])
-        
-        // Random field for random sampling
-        random: Math.random(),
-        
-        // Timestamp
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        // NO updatedAt unless the question is actually updated later
-      });
+      await batch.commit();
+      const duration = Date.now() - startTime;
+      console.log(`[Questions] Successfully wrote ${questions.length} questions in ${duration}ms`);
+      return questions.length;
     } catch (error) {
-      console.error(`[Questions] Error preparing question ${index + 1}:`, error.message);
+      console.error('[Questions] Error writing to Firestore:', error.message);
+      throw new Error(`Failed to write questions to database: ${error.message}`);
+    }
+  }
+
+  // When updating question analytics (in quiz app after user answers)
+  async updateQuestionAnalytics(questionId, wasCorrect) {
+    const db = getDb();
+    
+    try {
+      const questionRef = db.collection('questions').doc(questionId);
+      
+      await db.runTransaction(async (transaction) => {
+        const doc = await transaction.get(questionRef);
+        
+        if (!doc.exists) {
+          throw new Error('Question not found');
+        }
+        
+        const data = doc.data();
+        const newTotalAnswers = (data.totalAnswers || 0) + 1;
+        const newCorrectAnswers = (data.correctAnswers || 0) + (wasCorrect ? 1 : 0);
+        
+        // Calculate accuracy rate on the fly (not stored)
+        const accuracyRate = newCorrectAnswers / newTotalAnswers;
+        
+        // Auto-adjust difficulty based on accuracy rate
+        let newDifficulty = data.difficulty || 0;
+        if (newTotalAnswers >= 10) { // Only adjust after enough data
+          if (accuracyRate > 0.8) {
+            newDifficulty = 0; // Easy
+          } else if (accuracyRate > 0.5) {
+            newDifficulty = 1; // Medium
+          } else {
+            newDifficulty = 2; // Hard
+          }
+        }
+        
+        transaction.update(questionRef, {
+          totalAnswers: newTotalAnswers,
+          correctAnswers: newCorrectAnswers,
+          difficulty: newDifficulty,
+          // Don't store accuracyRate - calculate it when needed
+          // Only add updatedAt when actually updating
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+      });
+      
+      console.log(`[Questions] Updated analytics for question ${questionId}`);
+    } catch (error) {
+      console.error('Error updating question analytics:', error.message);
       throw error;
     }
-  });
-
-  try {
-    await batch.commit();
-    const duration = Date.now() - startTime;
-    console.log(`[Questions] Successfully wrote ${questions.length} questions in ${duration}ms`);
-    return questions.length;
-  } catch (error) {
-    console.error('[Questions] Error writing to Firestore:', error.message);
-    throw new Error(`Failed to write questions to database: ${error.message}`);
   }
-}
-
-// When updating question analytics (in quiz app after user answers)
-async updateQuestionAnalytics(questionId, wasCorrect) {
-  const db = getDb();
-  
-  try {
-    const questionRef = db.collection('questions').doc(questionId);
-    
-    await db.runTransaction(async (transaction) => {
-      const doc = await transaction.get(questionRef);
-      
-      if (!doc.exists) {
-        throw new Error('Question not found');
-      }
-      
-      const data = doc.data();
-      const newTotalAnswers = (data.totalAnswers || 0) + 1;
-      const newCorrectAnswers = (data.correctAnswers || 0) + (wasCorrect ? 1 : 0);
-      
-      // Calculate accuracy rate on the fly (not stored)
-      const accuracyRate = newCorrectAnswers / newTotalAnswers;
-      
-      // Auto-adjust difficulty based on accuracy rate
-      let newDifficulty = data.difficulty || 0;
-      if (newTotalAnswers >= 10) { // Only adjust after enough data
-        if (accuracyRate > 0.8) {
-          newDifficulty = 0; // Easy
-        } else if (accuracyRate > 0.5) {
-          newDifficulty = 1; // Medium
-        } else {
-          newDifficulty = 2; // Hard
-        }
-      }
-      
-      transaction.update(questionRef, {
-        totalAnswers: newTotalAnswers,
-        correctAnswers: newCorrectAnswers,
-        difficulty: newDifficulty,
-        // Don't store accuracyRate - calculate it when needed
-        // Only add updatedAt when actually updating
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-      });
-    });
-    
-    console.log(`[Questions] Updated analytics for question ${questionId}`);
-  } catch (error) {
-    console.error('Error updating question analytics:', error.message);
-    throw error;
-  }
-}
 
   async getQuestions(filters = {}) {
     const db = getDb();
@@ -299,6 +339,11 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
     // Add section filter if provided
     if (filters.sectionTitle) {
       query = query.where('sectionTitle', '==', filters.sectionTitle);
+    }
+
+    // Add prompt structure filter if provided
+    if (filters.promptStructure) {
+      query = query.where('generationMetadata.promptStructure', '==', filters.promptStructure);
     }
 
     if (filters.limit) {
@@ -333,6 +378,7 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
         byCategory: {},
         bySection: {}, // NEW: Stats by section
         byModel: {}, // Stats by AI model used
+        byPromptStructure: {}, // NEW: Stats by prompt structure version
         byDifficulty: { 0: 0, 1: 0, 2: 0 }, // Easy, Medium, Hard
         recentQuestions: [],
         averageAccuracy: 0,
@@ -364,6 +410,10 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
         // Count by AI model
         const model = data.generationMetadata?.model || 'unknown';
         stats.byModel[model] = (stats.byModel[model] || 0) + 1;
+
+        // Count by prompt structure (NEW)
+        const promptStructure = data.generationMetadata?.promptStructure || 'legacy';
+        stats.byPromptStructure[promptStructure] = (stats.byPromptStructure[promptStructure] || 0) + 1;
 
         // Count by generation version
         const version = data.generationMetadata?.generationVersion || 'legacy';
@@ -499,6 +549,9 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
     if (filters.difficulty !== undefined) {
       query = query.where('difficulty', '==', filters.difficulty);
     }
+    if (filters.promptStructure) {
+      query = query.where('generationMetadata.promptStructure', '==', filters.promptStructure);
+    }
 
     // Use random sampling for better distribution
     query = query.where('random', '>=', Math.random()).limit(count);
@@ -523,6 +576,9 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
         }
         if (filters.animeName) {
           filteredAdditionalQuery = filteredAdditionalQuery.where('animeName', '==', filters.animeName);
+        }
+        if (filters.promptStructure) {
+          filteredAdditionalQuery = filteredAdditionalQuery.where('generationMetadata.promptStructure', '==', filters.promptStructure);
         }
         
         const additionalSnapshot = await filteredAdditionalQuery.get();
@@ -613,9 +669,9 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
     const db = getDb();
     
     try {
-      // Find questions that don't have section information
+      // Find questions that don't have the new prompt structure
       const legacyQuery = db.collection('questions')
-        .where('generationMetadata.sectionProcessed', '==', false)
+        .where('generationMetadata.promptStructure', '==', null)
         .limit(100); // Process in batches
       
       const snapshot = await legacyQuery.get();
@@ -631,11 +687,12 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
       snapshot.docs.forEach(doc => {
         const data = doc.data();
         
-        // Update with section-based metadata
+        // Update with new prompt structure metadata
         batch.update(doc.ref, {
           sectionTitle: data.sectionTitle || 'Legacy Content',
           'generationMetadata.sectionProcessed': true,
           'generationMetadata.generationVersion': '2.1-migrated',
+          'generationMetadata.promptStructure': 'legacy',
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
@@ -648,6 +705,62 @@ async updateQuestionAnalytics(questionId, wasCorrect) {
       
     } catch (error) {
       console.error('Error migrating legacy questions:', error.message);
+      throw error;
+    }
+  }
+
+  // NEW: Method to analyze prompt structure performance
+  async analyzePromptStructurePerformance() {
+    const db = getDb();
+    
+    try {
+      const snapshot = await db.collection('questions').get();
+      const analysis = {
+        byPromptStructure: {},
+        totalQuestions: snapshot.size
+      };
+
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const promptStructure = data.generationMetadata?.promptStructure || 'legacy';
+        
+        if (!analysis.byPromptStructure[promptStructure]) {
+          analysis.byPromptStructure[promptStructure] = {
+            count: 0,
+            totalAnswered: 0,
+            totalCorrect: 0,
+            avgAccuracy: 0,
+            avgLikes: 0,
+            avgDislikes: 0
+          };
+        }
+        
+        const structure = analysis.byPromptStructure[promptStructure];
+        structure.count++;
+        
+        if (data.totalAnswers > 0) {
+          structure.totalAnswered += data.totalAnswers;
+          structure.totalCorrect += data.correctAnswers;
+        }
+        
+        structure.avgLikes += data.likes || 0;
+        structure.avgDislikes += data.dislikes || 0;
+      });
+
+      // Calculate averages
+      Object.keys(analysis.byPromptStructure).forEach(structure => {
+        const data = analysis.byPromptStructure[structure];
+        if (data.totalAnswered > 0) {
+          data.avgAccuracy = Math.round((data.totalCorrect / data.totalAnswered) * 100);
+        }
+        data.avgLikes = Math.round(data.avgLikes / data.count);
+        data.avgDislikes = Math.round(data.avgDislikes / data.count);
+      });
+
+      console.log('[Questions] Prompt structure performance analysis:', analysis);
+      return analysis;
+    } catch (error) {
+      console.error('Error analyzing prompt structure performance:', error.message);
       throw error;
     }
   }
