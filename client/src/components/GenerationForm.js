@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -26,13 +26,53 @@ export default function GenerationForm({ onStart }) {
   const [newPageInput, setNewPageInput] = useState('');
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [processingStats, setProcessingStats] = useState(null);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [aiProviderStats, setAiProviderStats] = useState(null);
 
-  // Available OpenAI models
-  const openaiModels = [
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast & Cost-effective)', description: 'Best for most use cases' },
-    { value: 'gpt-4.1', label: 'GPT-4.1', description: 'Higher quality, slower' },
-    { value: 'gpt-4.1-mini', label: 'GPT-4.1.mini', description: 'Faster 4.1' },
-    { value: 'o4-mini', label: 'o4-mini', description: 'Reasoning monster' }
+  // Available AI models - now loaded dynamically
+  const defaultModels = [
+    { 
+      id: 'gpt-4o-mini', 
+      name: 'GPT-4o Mini', 
+      description: 'Fast & Cost-effective (Best for most use cases)', 
+      provider: 'openai',
+      category: 'OpenAI Models'
+    },
+    { 
+      id: 'gpt-4.1', 
+      name: 'GPT-4.1', 
+      description: 'Higher quality, slower', 
+      provider: 'openai',
+      category: 'OpenAI Models'
+    },
+    { 
+      id: 'gpt-4.1-mini', 
+      name: 'GPT-4.1 Mini', 
+      description: 'Faster 4.1', 
+      provider: 'openai',
+      category: 'OpenAI Models'
+    },
+    { 
+      id: 'o4-mini', 
+      name: 'o4-mini', 
+      description: 'Reasoning monster', 
+      provider: 'openai',
+      category: 'OpenAI Models'
+    },
+    { 
+      id: 'gemini-2.5-pro', 
+      name: 'Gemini 2.5 Pro', 
+      description: 'Most capable Google model, higher quality but slower', 
+      provider: 'gemini',
+      category: 'Google Gemini Models'
+    },
+    { 
+      id: 'gemini-2.5-flash', 
+      name: 'Gemini 2.5 Flash', 
+      description: 'Fast and efficient Google model, good for most use cases', 
+      provider: 'gemini',
+      category: 'Google Gemini Models'
+    }
   ];
 
   // Prompt presets for different question styles
@@ -69,30 +109,33 @@ export default function GenerationForm({ onStart }) {
     { name: 'Jujutsu Kaisen', wiki: 'jujutsu-kaisen' }
   ];
 
-  useEffect(() => {
-    if (formData.animeName.length > 2) {
-      const timer = setTimeout(() => searchAnime(formData.animeName), 300);
-      return () => clearTimeout(timer);
+  // Memoized functions to avoid ESLint warnings
+  const fetchAvailableModels = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/ai/models`);
+      const data = await response.json();
+      if (data.success) {
+        setAvailableModels(data.models || defaultModels);
+      } else {
+        setAvailableModels(defaultModels);
+      }
+    } catch (error) {
+      console.error('Error fetching available models:', error);
+      setAvailableModels(defaultModels);
     }
-  }, [formData.animeName]);
+  }, [defaultModels]);
 
-  useEffect(() => {
-    if (formData.fandomWikiName) {
-      fetchInitialCategories(formData.fandomWikiName);
-      fetchProcessingStats(formData.fandomWikiName);
+  const fetchAIProviderStats = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/ai/providers/stats`);
+      const data = await response.json();
+      setAiProviderStats(data);
+    } catch (error) {
+      console.error('Error fetching AI provider stats:', error);
     }
-  }, [formData.fandomWikiName]);
+  }, []);
 
-  useEffect(() => {
-    if (categorySearchTerm.length >= 2 && formData.fandomWikiName) {
-      const timer = setTimeout(() => searchCategories(categorySearchTerm), 300);
-      return () => clearTimeout(timer);
-    } else if (categorySearchTerm.length === 0) {
-      setCategorySearchResults([]);
-    }
-  }, [categorySearchTerm, formData.fandomWikiName]);
-
-  const searchAnime = async (term) => {
+  const searchAnime = useCallback(async (term) => {
     setSearchingAnime(true);
     try {
       const response = await fetch(`${API_URL}/api/generation/anime/search/${encodeURIComponent(term)}`);
@@ -103,9 +146,9 @@ export default function GenerationForm({ onStart }) {
     } finally {
       setSearchingAnime(false);
     }
-  };
+  }, []);
 
-  const fetchInitialCategories = async (wikiName) => {
+  const fetchInitialCategories = useCallback(async (wikiName) => {
     setLoadingCategories(true);
     try {
       const response = await fetch(`${API_URL}/api/generation/wiki/${wikiName}/categories?limit=200`);
@@ -116,9 +159,9 @@ export default function GenerationForm({ onStart }) {
     } finally {
       setLoadingCategories(false);
     }
-  };
+  }, []);
 
-  const searchCategories = async (term) => {
+  const searchCategories = useCallback(async (term) => {
     setSearchingCategories(true);
     try {
       const response = await fetch(`${API_URL}/api/generation/wiki/${formData.fandomWikiName}/categories/search?q=${encodeURIComponent(term)}&limit=50`);
@@ -129,9 +172,9 @@ export default function GenerationForm({ onStart }) {
     } finally {
       setSearchingCategories(false);
     }
-  };
+  }, [formData.fandomWikiName]);
 
-  const fetchProcessingStats = async (wikiName) => {
+  const fetchProcessingStats = useCallback(async (wikiName) => {
     try {
       const response = await fetch(`${API_URL}/api/generation/wiki/${wikiName}/stats`);
       const data = await response.json();
@@ -139,7 +182,36 @@ export default function GenerationForm({ onStart }) {
     } catch (error) {
       console.error('Error fetching processing stats:', error);
     }
-  };
+  }, []);
+
+  // Effects with proper dependencies
+  useEffect(() => {
+    fetchAvailableModels();
+    fetchAIProviderStats();
+  }, [fetchAvailableModels, fetchAIProviderStats]);
+
+  useEffect(() => {
+    if (formData.animeName.length > 2) {
+      const timer = setTimeout(() => searchAnime(formData.animeName), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [formData.animeName, searchAnime]);
+
+  useEffect(() => {
+    if (formData.fandomWikiName) {
+      fetchInitialCategories(formData.fandomWikiName);
+      fetchProcessingStats(formData.fandomWikiName);
+    }
+  }, [formData.fandomWikiName, fetchInitialCategories, fetchProcessingStats]);
+
+  useEffect(() => {
+    if (categorySearchTerm.length >= 2 && formData.fandomWikiName) {
+      const timer = setTimeout(() => searchCategories(categorySearchTerm), 300);
+      return () => clearTimeout(timer);
+    } else if (categorySearchTerm.length === 0) {
+      setCategorySearchResults([]);
+    }
+  }, [categorySearchTerm, formData.fandomWikiName, searchCategories]);
 
   const handleSubmit = async () => {
     if (!formData.animeName || !formData.fandomWikiName) return;
@@ -214,16 +286,32 @@ export default function GenerationForm({ onStart }) {
     }));
   };
 
+  // Group models by provider
+  const groupedModels = availableModels.reduce((groups, model) => {
+    const category = model.category || (model.provider === 'openai' ? 'OpenAI Models' : 'Google Gemini Models');
+    if (!groups[category]) {
+      groups[category] = [];
+    }
+    groups[category].push(model);
+    return groups;
+  }, {});
+
+  // Check if a provider is available
+  const isProviderAvailable = (provider) => {
+    return aiProviderStats?.[provider]?.available ?? true; // Default to available if stats not loaded
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="bg-white shadow rounded-lg p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Generate New Questions</h2>
         
         <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
-          <h4 className="text-sm font-medium text-blue-800 mb-2">🆕 Enhanced Section-Based Processing</h4>
+          <h4 className="text-sm font-medium text-blue-800 mb-2">🆕 Enhanced Section-Based Processing with Multi-AI Support</h4>
           <div className="text-sm text-blue-700">
             <p>Questions are now generated per wiki section (Introduction, Personality, Abilities, etc.)</p>
             <p><strong>Smart sizing:</strong> Sections with 200+ words, questions = words ÷ 100</p>
+            <p><strong>Multi-AI:</strong> Choose from OpenAI GPT models or Google Gemini models</p>
             <p><strong>Automatic merging:</strong> Small sections combined, large sections truncated at 2000 words</p>
           </div>
         </div>
@@ -481,27 +569,64 @@ export default function GenerationForm({ onStart }) {
             )}
           </div>
 
-          {/* AI Configuration Section */}
+          {/* Enhanced AI Configuration Section */}
           <div className="border-t pt-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">🤖 AI Configuration</h3>
             
-            {/* OpenAI Model Selection */}
+            {/* AI Provider Status */}
+            {aiProviderStats && (
+              <div className="mb-4 p-3 bg-gray-50 rounded-md">
+                <p className="text-xs text-gray-600 mb-2">Provider Status:</p>
+                <div className="flex items-center space-x-4 text-xs">
+                  <div className="flex items-center">
+                    <div className={`w-2 h-2 rounded-full mr-2 ${isProviderAvailable('openai') ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span>OpenAI ({aiProviderStats.openai?.models || 0} models)</span>
+                  </div>
+                  <div className="flex items-center">
+                    <div className={`w-2 h-2 rounded-full mr-2 ${isProviderAvailable('gemini') ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span>Google Gemini ({aiProviderStats.gemini?.models || 0} models)</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* AI Model Selection - Now grouped by provider */}
             <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">OpenAI Model</label>
-              <div className="space-y-2">
-                {openaiModels.map((model) => (
-                  <label key={model.value} className="flex items-start">
-                    <input
-                      type="radio"
-                      checked={formData.openaiModel === model.value}
-                      onChange={() => setFormData({ ...formData, openaiModel: model.value })}
-                      className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 mt-1"
-                    />
-                    <div className="ml-3">
-                      <span className="text-sm font-medium text-gray-700">{model.label}</span>
-                      <p className="text-xs text-gray-500">{model.description}</p>
+              <label className="block text-sm font-medium text-gray-700 mb-3">AI Model</label>
+              <div className="space-y-4">
+                {Object.entries(groupedModels).map(([category, models]) => (
+                  <div key={category}>
+                    <h4 className="text-sm font-medium text-gray-600 mb-2 flex items-center">
+                      {category.includes('OpenAI') ? '🔵' : '🟢'} {category}
+                      {!isProviderAvailable(models[0]?.provider) && (
+                        <span className="ml-2 text-xs text-red-500">(API key not configured)</span>
+                      )}
+                    </h4>
+                    <div className="space-y-2 ml-4">
+                      {models.map((model) => (
+                        <label key={model.id} className="flex items-start">
+                          <input
+                            type="radio"
+                            checked={formData.openaiModel === model.id}
+                            onChange={() => setFormData({ ...formData, openaiModel: model.id })}
+                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 mt-1"
+                            disabled={!isProviderAvailable(model.provider)}
+                          />
+                          <div className="ml-3">
+                            <span className={`text-sm font-medium ${!isProviderAvailable(model.provider) ? 'text-gray-400' : 'text-gray-700'}`}>
+                              {model.name}
+                            </span>
+                            <p className={`text-xs ${!isProviderAvailable(model.provider) ? 'text-gray-400' : 'text-gray-500'}`}>
+                              {model.description}
+                              {model.provider === 'gemini' && isProviderAvailable('gemini') && (
+                                <span className="ml-2 text-green-600 font-medium">✨ New!</span>
+                              )}
+                            </p>
+                          </div>
+                        </label>
+                      ))}
                     </div>
-                  </label>
+                  </div>
                 ))}
               </div>
             </div>
@@ -558,7 +683,7 @@ export default function GenerationForm({ onStart }) {
                   max="100"
                   className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
                 />
-                <p className="mt-1 text-xs text-gray-500">Limits OpenAI API usage</p>
+                <p className="mt-1 text-xs text-gray-500">Limits AI API usage</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Base Question Multiplier</label>
@@ -591,9 +716,21 @@ export default function GenerationForm({ onStart }) {
               {loading ? (
                 <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
               ) : (
-                'Start Section-Based Generation'
+                'Start Enhanced AI-Powered Generation'
               )}
             </button>
+            
+            {/* Model info display */}
+            {formData.openaiModel && (
+              <div className="mt-2 text-center">
+                <p className="text-xs text-gray-500">
+                  Using: {availableModels.find(m => m.id === formData.openaiModel)?.name || formData.openaiModel}
+                  {availableModels.find(m => m.id === formData.openaiModel)?.provider === 'gemini' && (
+                    <span className="ml-1 text-green-600">✨ Google Gemini</span>
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </div>

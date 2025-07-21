@@ -1,6 +1,6 @@
 // server/services/questionsService.js
 const { z } = require('zod');
-const openaiService = require('./openaiService.js');
+const aiProviderService = require('./aiProviderService.js');
 const { getDb } = require('../config/firebase');
 const admin = require('firebase-admin');
 
@@ -45,78 +45,24 @@ class QuestionService {
       amountOfQuestions
     });
 
-    const functions = [
-      {
-        name: 'generate_questions',
-        description: 'Generate multiple-choice questions from a text',
-        parameters: {
-          type: 'object',
-          properties: {
-            questions: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  question: { type: 'string' },
-                  options: {
-                    type: 'array',
-                    items: { type: 'string' },
-                    minItems: 4,
-                    maxItems: 4,
-                  },
-                  correctAnswer: { type: 'integer', minimum: 0, maximum: 3 },
-                },
-                required: ['question', 'options', 'correctAnswer'],
-              },
-            },
-          },
-          required: ['questions'],
-        },
-      },
-    ];
-
     try {
-      console.log(`[Questions] Making OpenAI API call with improved prompt structure...`);
+      console.log(`[Questions] Making AI API call with improved prompt structure...`);
+      console.log(`[Questions] Using AI Provider Service with model: ${options.model || 'gpt-4o-mini'}`);
       
-      const response = await openaiService.createCompletion({
-        model: options.model || 'gpt-4o-mini', // Use custom model
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a helpful assistant that is an expert in generating fun, challenging, and diverse quiz questions. You will receive wiki text clearly marked with XML tags, followed by reference information and specific instructions.',
-          },
-          { role: 'user', content: prompt },
-        ],
-        functions: functions,
-        function_call: { name: 'generate_questions' },
-        max_tokens: 1000,
-        temperature: 0.7,
-      });
+      const questions = await aiProviderService.generateQuestions(
+        prompt,
+        options.model || 'gpt-4o-mini',
+        {
+          temperature: 0.7,
+          ...options
+        }
+      );
 
       const duration = Date.now() - startTime;
-      console.log(`[Questions] OpenAI response received in ${duration}ms`);
-
-      const message = response.choices[0].message;
-
-      if (message.function_call && message.function_call.name === 'generate_questions') {
-        try {
-          const args = JSON.parse(message.function_call.arguments);
-          console.log(`[Questions] Parsing response... found ${args.questions?.length || 0} questions`);
-          
-          const parsedData = QuestionsSchema.parse(args.questions);
-          console.log(`[Questions] Successfully validated ${parsedData.length} questions`);
-          
-          return parsedData;
-        } catch (parseError) {
-          console.error('[Questions] Error parsing OpenAI response:', parseError.message);
-          console.error('[Questions] Raw response:', message.function_call.arguments);
-          throw new Error(`Failed to parse OpenAI response: ${parseError.message}`);
-        }
-      } else {
-        console.error('[Questions] OpenAI did not call the expected function');
-        console.error('[Questions] Response:', JSON.stringify(message, null, 2));
-        throw new Error('OpenAI did not call the expected function');
-      }
+      console.log(`[Questions] AI response received in ${duration}ms`);
+      console.log(`[Questions] Successfully validated ${questions.length} questions`);
+      
+      return questions;
       
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -130,6 +76,21 @@ class QuestionService {
       // For other errors, provide more context
       throw new Error(`Question generation failed: ${error.message}`);
     }
+  }
+
+  // Get all available AI models
+  getAvailableModels() {
+    return aiProviderService.getAllAvailableModels();
+  }
+
+  // Test AI provider connections
+  async testAIConnections() {
+    return await aiProviderService.testAllConnections();
+  }
+
+  // Get AI provider statistics
+  async getAIProviderStats() {
+    return await aiProviderService.getProviderStats();
   }
 
   // NEW METHOD: Build improved prompt with clear structure
@@ -219,7 +180,7 @@ Generate ${amountOfQuestions} multiple-choice questions based on the 'FANDOM WIK
             generationVersion: '2.1',
             sectionProcessed: true,
             sectionTitle: metadata.sectionTitle || '', // Section title goes here
-            promptStructure: 'promt structue & XML tags' // NEW: Track prompt structure version
+            promptStructure: 'improved-v2.1' // NEW: Track prompt structure version
           },
           
           // Question analytics fields

@@ -35,6 +35,8 @@ console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('GOOGLE_APPLICATION_CREDENTIALS:', process.env.GOOGLE_APPLICATION_CREDENTIALS);
 console.log('FIREBASE_PROJECT_ID:', process.env.FIREBASE_PROJECT_ID);
 console.log('FIREBASE_CLIENT_EMAIL:', process.env.FIREBASE_CLIENT_EMAIL);
+console.log('OPENAI_API_KEY configured:', !!process.env.OPENAI_API_KEY);
+console.log('GEMINI_KEY configured:', !!process.env.GEMINI_KEY);
 
 console.log('=== FIREBASE DIAGNOSTIC END ===');
 
@@ -47,6 +49,7 @@ const { initializeFirebase } = require('./config/firebase');
 // IMPORTANT: Make sure these imports are correct
 const generationRoutes = require('./routes/generation');
 const questionsRoutes = require('./routes/questions');
+const aiRoutes = require('./routes/ai'); // NEW: AI routes
 
 const app = express();
 const server = http.createServer(app);
@@ -91,6 +94,15 @@ try {
     console.error('Error importing questions routes:', error.message);
 }
 
+try {
+    const aiRoutes = require('./routes/ai');
+    console.log('AI routes type:', typeof aiRoutes);
+    console.log('AI routes is function:', typeof aiRoutes === 'function');
+    console.log('AI routes keys:', Object.keys(aiRoutes));
+} catch (error) {
+    console.error('Error importing AI routes:', error.message);
+}
+
 console.log('=== ROUTE DEBUG END ===');
 
 // Then your existing code continues...
@@ -114,6 +126,27 @@ app.set('io', io);
 // API Routes - THIS IS THE CRITICAL FIX
 app.use('/api/generation', generationRoutes);
 app.use('/api/questions', questionsRoutes);
+app.use('/api/ai', aiRoutes); // NEW: AI routes
+
+// Health check endpoint
+app.get('/api/health', async (req, res) => {
+    try {
+        res.json({
+            status: 'healthy',
+            timestamp: new Date().toISOString(),
+            services: {
+                firebase: 'connected',
+                openai: !!process.env.OPENAI_API_KEY ? 'configured' : 'not_configured',
+                gemini: !!process.env.GEMINI_KEY ? 'configured' : 'not_configured'
+            }
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
+});
 
 // Serve frontend only in production
 if (process.env.NODE_ENV === 'production') {
@@ -124,5 +157,43 @@ if (process.env.NODE_ENV === 'production') {
     });
 }
 
+// Test AI providers on startup
+async function testAIProviders() {
+    console.log('🧪 Testing AI providers on startup...');
+    
+    try {
+        const aiProviderService = require('./services/aiProviderService');
+        const results = await aiProviderService.testAllConnections();
+        
+        console.log('OpenAI Status:', results.openai?.success ? '✅ Connected' : '❌ Failed');
+        if (results.openai?.error) {
+            console.log('OpenAI Error:', results.openai.error);
+        }
+        
+        console.log('Gemini Status:', results.gemini?.success ? '✅ Connected' : '❌ Failed');
+        if (results.gemini?.error) {
+            console.log('Gemini Error:', results.gemini.error);
+        }
+        
+        const availableProviders = Object.entries(results)
+            .filter(([_, result]) => result.success)
+            .map(([provider]) => provider);
+            
+        if (availableProviders.length === 0) {
+            console.log('⚠️  WARNING: No AI providers are available. Check your API keys.');
+        } else {
+            console.log(`🎉 Available AI providers: ${availableProviders.join(', ')}`);
+        }
+        
+    } catch (error) {
+        console.error('❌ Failed to test AI providers:', error.message);
+    }
+}
+
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    
+    // Test AI providers after server starts
+    testAIProviders();
+});
