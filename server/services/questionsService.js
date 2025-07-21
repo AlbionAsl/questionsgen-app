@@ -204,6 +204,7 @@ Generate ${amountOfQuestions} multiple-choice questions based on the 'FANDOM WIK
           likes: 0,
           totalAnswers: 0,
           correctAnswers: 0,
+          reviewScore: null,
           // NO accuracyRate field - it's calculated on the fly when needed
           
           // Usage tracking for the quiz system

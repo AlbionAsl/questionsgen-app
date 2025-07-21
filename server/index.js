@@ -49,7 +49,8 @@ const { initializeFirebase } = require('./config/firebase');
 // IMPORTANT: Make sure these imports are correct
 const generationRoutes = require('./routes/generation');
 const questionsRoutes = require('./routes/questions');
-const aiRoutes = require('./routes/ai'); // NEW: AI routes
+const aiRoutes = require('./routes/ai');
+const questionReviewRoutes = require('./routes/questionReview'); // NEW: Question Review routes
 
 const app = express();
 const server = http.createServer(app);
@@ -103,6 +104,15 @@ try {
     console.error('Error importing AI routes:', error.message);
 }
 
+try {
+    const questionReviewRoutes = require('./routes/questionReview');
+    console.log('Question Review routes type:', typeof questionReviewRoutes);
+    console.log('Question Review routes is function:', typeof questionReviewRoutes === 'function');
+    console.log('Question Review routes keys:', Object.keys(questionReviewRoutes));
+} catch (error) {
+    console.error('Error importing Question Review routes:', error.message);
+}
+
 console.log('=== ROUTE DEBUG END ===');
 
 // Then your existing code continues...
@@ -126,7 +136,8 @@ app.set('io', io);
 // API Routes - THIS IS THE CRITICAL FIX
 app.use('/api/generation', generationRoutes);
 app.use('/api/questions', questionsRoutes);
-app.use('/api/ai', aiRoutes); // NEW: AI routes
+app.use('/api/ai', aiRoutes);
+app.use('/api/review', questionReviewRoutes); // NEW: Question Review routes
 
 // Health check endpoint
 app.get('/api/health', async (req, res) => {

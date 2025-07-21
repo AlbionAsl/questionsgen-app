@@ -5,6 +5,7 @@ import ProgressMonitor from './components/ProgressMonitor';
 import QuestionsList from './components/QuestionsList';
 import History from './components/History';
 import PopularPages from './components/PopularPages';
+import QuestionReview from './components/QuestionReview'; // NEW: Import QuestionReview
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -79,6 +80,7 @@ export default function App() {
               { id: 'popular', label: 'Popular Pages', icon: '⭐' },
               { id: 'progress', label: 'Progress Monitor', icon: '📊' },
               { id: 'questions', label: 'View Questions', icon: '❓' },
+              { id: 'review', label: 'Question Review', icon: '👻' }, // NEW: Question Review tab
               { id: 'history', label: 'Generation History', icon: '📜' }
             ].map((tab) => (
               <button
@@ -117,6 +119,9 @@ export default function App() {
         )}
         {activeTab === 'questions' && (
           <QuestionsList stats={stats} />
+        )}
+        {activeTab === 'review' && ( // NEW: Question Review component
+          <QuestionReview socket={socket} />
         )}
         {activeTab === 'history' && (
           <History onViewProcess={(id) => {
