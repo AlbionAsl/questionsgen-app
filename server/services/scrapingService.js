@@ -101,9 +101,16 @@ class ScrapingService {
   }
 
   // NEW: Enhanced method to remove unwanted sections with better pattern matching
+// server/services/scrapingService.js - FIXED removeUnwantedSections method
+// This is just the fixed method - add this to your existing scrapingService.js
+
+  // NEW: Enhanced method to remove unwanted sections with better pattern matching
   removeUnwantedSections($, skipSections) {
     let removedSections = 0;
     const normalizedSkipSections = skipSections.map(s => s.toLowerCase().trim());
+    
+    // CRITICAL FIX: Store reference to 'this' for use inside callbacks
+    const self = this;
     
     console.log(`[SectionFilter] Starting section removal with ${skipSections.length} patterns...`);
 
@@ -136,8 +143,9 @@ class ScrapingService {
               const headerText = $header.text().toLowerCase().trim();
               console.log(`[SectionFilter] Found section header via ID: "${headerText}"`);
               
-              if (this.shouldSkipSection(headerText, normalizedSkipSections)) {
-                this.removeSectionContent($, $header);
+              // FIX: Use 'self' instead of 'this'
+              if (self.shouldSkipSection(headerText, normalizedSkipSections)) {
+                self.removeSectionContent($, $header);
                 removedSections++;
               }
             }
@@ -151,11 +159,12 @@ class ScrapingService {
       const $span = $(element);
       const headlineText = $span.text().toLowerCase().trim();
       
-      if (this.shouldSkipSection(headlineText, normalizedSkipSections)) {
+      // FIX: Use 'self' instead of 'this'
+      if (self.shouldSkipSection(headlineText, normalizedSkipSections)) {
         console.log(`[SectionFilter] Removing section by headline: "${headlineText}"`);
         const $header = $span.closest('h1, h2, h3, h4, h5, h6');
         if ($header.length > 0) {
-          this.removeSectionContent($, $header);
+          self.removeSectionContent($, $header);
           removedSections++;
         }
       }
@@ -169,9 +178,10 @@ class ScrapingService {
         .replace(/\[[^\]]*\]/g, '') // Remove other bracketed content
         .trim();
       
-      if (headerText && this.shouldSkipSection(headerText, normalizedSkipSections)) {
+      // FIX: Use 'self' instead of 'this'
+      if (headerText && self.shouldSkipSection(headerText, normalizedSkipSections)) {
         console.log(`[SectionFilter] Removing section by direct header match: "${headerText}"`);
-        this.removeSectionContent($, $header);
+        self.removeSectionContent($, $header);
         removedSections++;
       }
     });

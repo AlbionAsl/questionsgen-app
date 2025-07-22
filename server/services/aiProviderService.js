@@ -73,38 +73,127 @@ class AIProviderService {
   }
 
   // Unified method to generate questions regardless of provider
+// server/services/aiProviderService.js - ENHANCED generateQuestions method with retry logic
+
+  // Unified method to generate questions regardless of provider
   async generateQuestions(prompt, modelId, options = {}) {
     const startTime = Date.now();
     console.log(`[AIProvider] Starting question generation with model: ${modelId}`);
     
-    try {
-      const { provider, model, service } = this.getProviderInfo(modelId);
-      console.log(`[AIProvider] Using provider: ${provider}`);
-      
-      let result;
-      
-      if (provider === 'openai') {
-        result = await this.generateWithOpenAI(prompt, modelId, service, options);
-      } else if (provider === 'gemini') {
-        result = await this.generateWithGemini(prompt, modelId, service, options);
-      } else {
-        throw new Error(`Unsupported provider: ${provider}`);
+    // Default retry configuration
+    const maxRetries = options.maxRetries || 1; // Allow 1 retry by default
+    let lastError = null;
+    
+    // Try up to maxRetries + 1 times (initial attempt + retries)
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`[AIProvider] Retry attempt ${attempt} for model: ${modelId}`);
+          // Add a small delay before retry to avoid rate limiting
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        
+        const { provider, model, service } = this.getProviderInfo(modelId);
+        console.log(`[AIProvider] Using provider: ${provider}`);
+        
+        let result;
+        
+        if (provider === 'openai') {
+          result = await this.generateWithOpenAI(prompt, modelId, service, options);
+        } else if (provider === 'gemini') {
+          result = await this.generateWithGemini(prompt, modelId, service, options);
+        } else {
+          throw new Error(`Unsupported provider: ${provider}`);
+        }
+        
+        // Validate the result format
+        this.validateQuestionResult(result);
+        
+        const duration = Date.now() - startTime;
+        console.log(`[AIProvider] Question generation completed in ${duration}ms`);
+        console.log(`[AIProvider] Generated ${result.length} questions`);
+        
+        return result;
+        
+      } catch (error) {
+        lastError = error;
+        const duration = Date.now() - startTime;
+        console.error(`[AIProvider] Question generation failed after ${duration}ms:`, error.message);
+        
+        // Check if we should retry
+        if (attempt < maxRetries) {
+          console.log(`[AIProvider] Will retry (attempt ${attempt + 1} of ${maxRetries})...`);
+          
+          // Check if it's a retryable error
+          const isRetryable = this.isRetryableError(error);
+          if (!isRetryable) {
+            console.log(`[AIProvider] Error is not retryable, stopping retry attempts`);
+            throw error;
+          }
+        } else {
+          console.error(`[AIProvider] All retry attempts exhausted`);
+        }
       }
-      
-      // Validate the result format
-      this.validateQuestionResult(result);
-      
-      const duration = Date.now() - startTime;
-      console.log(`[AIProvider] Question generation completed in ${duration}ms`);
-      console.log(`[AIProvider] Generated ${result.length} questions`);
-      
-      return result;
-      
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      console.error(`[AIProvider] Question generation failed after ${duration}ms:`, error.message);
-      throw error;
     }
+    
+    // If we get here, all attempts failed
+    const duration = Date.now() - startTime;
+    throw new Error(`Question generation failed after ${maxRetries + 1} attempts (${duration}ms): ${lastError.message}`);
+  }
+
+  // Helper method to determine if an error is retryable
+  isRetryableError(error) {
+    const errorMessage = error.message.toLowerCase();
+    
+    // Network and timeout errors are retryable
+    if (errorMessage.includes('timeout') || 
+        errorMessage.includes('timed out') ||
+        errorMessage.includes('network') ||
+        errorMessage.includes('econnrefused') ||
+        errorMessage.includes('enotfound') ||
+        errorMessage.includes('socket')) {
+      return true;
+    }
+    
+    // Rate limiting errors are retryable
+    if (errorMessage.includes('rate limit') ||
+        errorMessage.includes('429') ||
+        errorMessage.includes('too many requests')) {
+      return true;
+    }
+    
+    // Temporary server errors are retryable
+    if (errorMessage.includes('500') ||
+        errorMessage.includes('502') ||
+        errorMessage.includes('503') ||
+        errorMessage.includes('504') ||
+        errorMessage.includes('server error')) {
+      return true;
+    }
+    
+    // Context issues (like the one we just fixed) might be retryable
+    if (errorMessage.includes('is not a function') ||
+        errorMessage.includes('cannot read property')) {
+      return true;
+    }
+    
+    // Authentication errors are NOT retryable
+    if (errorMessage.includes('api key') ||
+        errorMessage.includes('authentication') ||
+        errorMessage.includes('unauthorized') ||
+        errorMessage.includes('403')) {
+      return false;
+    }
+    
+    // Invalid request errors are NOT retryable
+    if (errorMessage.includes('invalid') ||
+        errorMessage.includes('bad request') ||
+        errorMessage.includes('400')) {
+      return false;
+    }
+    
+    // Default to retryable for unknown errors
+    return true;
   }
 
   // Generate questions using OpenAI

@@ -1,0 +1,5 @@
+- Improved prompt generation - DONE
+- Add Google API possibility - DONE
+- Save the Sections in cache or something just to display them - DONE
+- Add 'Ignored sections' - custom and a few set ones - DONE
+- Review questions - DONE

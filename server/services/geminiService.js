@@ -14,6 +14,8 @@ class GeminiService {
     }
   }
 
+// server/services/geminiService.js - ENHANCED error handling for generateQuestions method
+
   async generateQuestions(prompt, model = 'gemini-2.5-pro') {
     const startTime = Date.now();
     console.log(`[Gemini] Starting API call at ${new Date().toISOString()}`);
@@ -84,50 +86,20 @@ class GeminiService {
       console.log(`[Gemini] API call completed successfully in ${duration}ms`);
       
       // ENHANCED: Better response handling
-      console.log(`[Gemini] Full response structure:`, JSON.stringify(response, null, 2));
+      console.log(`[Gemini] Response type: ${typeof response}`);
+      console.log(`[Gemini] Response keys: ${response ? Object.keys(response).join(', ') : 'null'}`);
       
       // Check for function calls in the response
       if (response.functionCalls && response.functionCalls.length > 0) {
         const functionCall = response.functionCalls[0];
         console.log(`[Gemini] Function called: ${functionCall.name}`);
-        console.log(`[Gemini] Function args:`, JSON.stringify(functionCall.args, null, 2));
+        console.log(`[Gemini] Function args type: ${typeof functionCall.args}`);
         
         if (functionCall.args && functionCall.args.questions) {
           console.log(`[Gemini] Found ${functionCall.args.questions.length} questions`);
           
-          // ENHANCED: Fix correctAnswer values if needed
-          const questions = functionCall.args.questions;
-          for (let i = 0; i < questions.length; i++) {
-            const q = questions[i];
-            
-            // Fix correctAnswer if it's not in 0-3 range
-            if (typeof q.correctAnswer !== 'number' || q.correctAnswer < 0 || q.correctAnswer > 3) {
-              console.warn(`[Gemini] Function call - Question ${i + 1}: correctAnswer is ${q.correctAnswer}, attempting to fix...`);
-              
-              // Try to find the correct index by matching the answer value to options
-              let fixedIndex = -1;
-              const correctAnswerStr = String(q.correctAnswer);
-              
-              for (let optionIndex = 0; optionIndex < q.options?.length || 0; optionIndex++) {
-                const option = String(q.options[optionIndex]);
-                
-                if (option === correctAnswerStr || 
-                    option.replace(/,/g, '') === correctAnswerStr.replace(/,/g, '') ||
-                    option.includes(correctAnswerStr) || correctAnswerStr.includes(option)) {
-                  fixedIndex = optionIndex;
-                  break;
-                }
-              }
-              
-              if (fixedIndex !== -1) {
-                console.log(`[Gemini] Function call - Fixed question ${i + 1}: correctAnswer changed from ${q.correctAnswer} to ${fixedIndex}`);
-                q.correctAnswer = fixedIndex;
-              } else {
-                console.log(`[Gemini] Function call - Defaulting question ${i + 1} correctAnswer to 0`);
-                q.correctAnswer = 0;
-              }
-            }
-          }
+          // Fix correctAnswer values if needed
+          const questions = this.fixCorrectAnswerIndices(functionCall.args.questions);
           
           return {
             success: true,
@@ -141,100 +113,167 @@ class GeminiService {
       } else {
         console.log('[Gemini] No function call found, trying to parse response differently');
         
-        // ENHANCED: Check different response properties
-        const responseText = response.text || response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        console.log('[Gemini] Response text length:', responseText.length);
-        console.log('[Gemini] Response text preview:', responseText.substring(0, 500));
+        // Try different response structures
+        const responseText = this.extractResponseText(response);
         
-        // ENHANCED: Multiple parsing attempts
-        try {
-          // Try 1: Direct JSON parse
-          if (responseText) {
-            console.log('[Gemini] Attempting direct JSON parse...');
-            const parsed = JSON.parse(responseText);
-            if (parsed.questions) {
-              console.log(`[Gemini] Successfully parsed ${parsed.questions.length} questions from text`);
-              return {
-                success: true,
-                questions: parsed.questions,
-                usage: response.usage || null
-              };
-            }
-          }
+        if (responseText) {
+          console.log('[Gemini] Response text length:', responseText.length);
+          console.log('[Gemini] Response text preview:', responseText.substring(0, 500));
           
-          // Try 2: Extract JSON from text
-          console.log('[Gemini] Attempting to extract JSON from response...');
-          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            console.log('[Gemini] Found JSON-like content, parsing...');
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed.questions) {
-              console.log(`[Gemini] Successfully extracted ${parsed.questions.length} questions`);
-              return {
-                success: true,
-                questions: parsed.questions,
-                usage: response.usage || null
-              };
-            }
-          }
+          // Try multiple parsing strategies
+          const parsedQuestions = await this.tryParseQuestions(responseText);
           
-          // Try 3: Check if response is already structured
-          if (response.candidates && response.candidates.length > 0) {
-            const candidate = response.candidates[0];
-            console.log('[Gemini] Checking candidate structure...');
-            
-            // Check if there's structured data in the candidate
-            if (candidate.content && candidate.content.parts) {
-              for (const part of candidate.content.parts) {
-                if (part.functionCall) {
-                  console.log('[Gemini] Found function call in candidate parts');
-                  const args = part.functionCall.args;
-                  if (args && args.questions) {
-                    return {
-                      success: true,
-                      questions: args.questions,
-                      usage: response.usage || null
-                    };
-                  }
-                }
-              }
-            }
+          if (parsedQuestions && parsedQuestions.length > 0) {
+            return {
+              success: true,
+              questions: parsedQuestions,
+              usage: response.usage || null
+            };
           }
-          
-        } catch (parseError) {
-          console.error('[Gemini] All parsing attempts failed:', parseError.message);
         }
         
         // FALLBACK: Try structured output instead
         console.log('[Gemini] Function calling failed, falling back to structured output...');
-        return await this.generateQuestionsStructured(prompt, 'gemini-2.5-flash');
+        return await this.generateQuestionsStructured(prompt, model);
       }
       
     } catch (error) {
       const duration = Date.now() - startTime;
       console.error(`[Gemini] API call failed after ${duration}ms:`, error.message);
+      console.error(`[Gemini] Error stack:`, error.stack);
       
       // Log more details about the error
-      if (error.code) {
-        console.error(`[Gemini] Error code: ${error.code}`);
-      }
-      if (error.status) {
-        console.error(`[Gemini] HTTP status: ${error.status}`);
+      if (error.response) {
+        console.error(`[Gemini] Error response status:`, error.response.status);
+        console.error(`[Gemini] Error response data:`, JSON.stringify(error.response.data, null, 2));
       }
       
-      // FALLBACK: If function calling completely fails, try structured output
-      if (error.message.includes('function') || error.message.includes('format')) {
-        console.log('[Gemini] Attempting fallback to structured output...');
-        try {
-          return await this.generateQuestionsStructured(prompt, 'gemini-2.5-flash');
-        } catch (fallbackError) {
-          console.error('[Gemini] Fallback also failed:', fallbackError.message);
+      // Add more context to the error
+      const enhancedError = new Error(`Gemini API error (${duration}ms, model: ${model}): ${error.message}`);
+      enhancedError.originalError = error;
+      enhancedError.model = model;
+      enhancedError.duration = duration;
+      
+      throw enhancedError;
+    }
+  }
+
+  // Helper method to extract text from various response structures
+  extractResponseText(response) {
+    // Try different paths to find the response text
+    const paths = [
+      () => response.text,
+      () => response.candidates?.[0]?.content?.parts?.[0]?.text,
+      () => response.candidates?.[0]?.text,
+      () => response.result?.text,
+      () => response.response?.text
+    ];
+    
+    for (const pathFn of paths) {
+      try {
+        const text = pathFn();
+        if (text && typeof text === 'string') {
+          return text;
+        }
+      } catch (e) {
+        // Continue to next path
+      }
+    }
+    
+    return null;
+  }
+
+  // Helper method to try multiple parsing strategies
+  async tryParseQuestions(responseText) {
+    const strategies = [
+      // Strategy 1: Direct JSON parse
+      () => {
+        console.log('[Gemini] Trying direct JSON parse...');
+        const parsed = JSON.parse(responseText);
+        return parsed.questions || parsed;
+      },
+      
+      // Strategy 2: Extract JSON from text
+      () => {
+        console.log('[Gemini] Trying to extract JSON from text...');
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return parsed.questions || parsed;
+        }
+        return null;
+      },
+      
+      // Strategy 3: Extract JSON array
+      () => {
+        console.log('[Gemini] Trying to extract JSON array...');
+        const arrayMatch = responseText.match(/\[[\s\S]*\]/);
+        if (arrayMatch) {
+          return JSON.parse(arrayMatch[0]);
+        }
+        return null;
+      },
+      
+      // Strategy 4: Clean markdown code blocks
+      () => {
+        console.log('[Gemini] Trying to clean markdown code blocks...');
+        const cleaned = responseText
+          .replace(/```json\s*/gi, '')
+          .replace(/```\s*/gi, '')
+          .trim();
+        const parsed = JSON.parse(cleaned);
+        return parsed.questions || parsed;
+      }
+    ];
+    
+    for (const strategy of strategies) {
+      try {
+        const result = strategy();
+        if (result && Array.isArray(result) && result.length > 0) {
+          console.log(`[Gemini] Successfully parsed ${result.length} questions`);
+          return this.fixCorrectAnswerIndices(result);
+        }
+      } catch (e) {
+        // Continue to next strategy
+      }
+    }
+    
+    console.error('[Gemini] All parsing strategies failed');
+    return null;
+  }
+
+  // Helper method to fix correctAnswer indices
+  fixCorrectAnswerIndices(questions) {
+    return questions.map((q, i) => {
+      if (typeof q.correctAnswer !== 'number' || q.correctAnswer < 0 || q.correctAnswer > 3) {
+        console.warn(`[Gemini] Question ${i + 1}: correctAnswer is ${q.correctAnswer}, attempting to fix...`);
+        
+        // Try to find the correct index by matching the answer value to options
+        let fixedIndex = -1;
+        const correctAnswerStr = String(q.correctAnswer);
+        
+        for (let optionIndex = 0; optionIndex < (q.options?.length || 0); optionIndex++) {
+          const option = String(q.options[optionIndex]);
+          
+          if (option === correctAnswerStr || 
+              option.replace(/,/g, '') === correctAnswerStr.replace(/,/g, '') ||
+              option.includes(correctAnswerStr) || correctAnswerStr.includes(option)) {
+            fixedIndex = optionIndex;
+            break;
+          }
+        }
+        
+        if (fixedIndex !== -1) {
+          console.log(`[Gemini] Fixed question ${i + 1}: correctAnswer changed from ${q.correctAnswer} to ${fixedIndex}`);
+          q.correctAnswer = fixedIndex;
+        } else {
+          console.log(`[Gemini] Defaulting question ${i + 1} correctAnswer to 0`);
+          q.correctAnswer = 0;
         }
       }
       
-      // Re-throw with more context
-      throw new Error(`Gemini API error (${duration}ms): ${error.message}`);
-    }
+      return q;
+    });
   }
 
   // Alternative method using structured output instead of function calling

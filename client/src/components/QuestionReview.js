@@ -21,12 +21,13 @@ export default function QuestionReview({ socket }) {
 RESPOND WITH ONLY A JSON ARRAY OF {count} INTEGER SCORES:
 Example: [4, 5, 3, 2, 4, 5, 1, 3, 4, 2]
 
-Your response:`); // NEW: Customizable review prompt
+Your response:`);
   const [reviewStats, setReviewStats] = useState(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewProgress, setReviewProgress] = useState(null);
   const [reviewResults, setReviewResults] = useState(null);
   const [questionsToDelete, setQuestionsToDelete] = useState([]);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState(new Set()); // NEW: Track selected questions
   const [showDeletePreview, setShowDeletePreview] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
@@ -173,7 +174,7 @@ Your response:`); // NEW: Customizable review prompt
           animeName: selectedAnime,
           batchSize: batchSize,
           model: selectedModel,
-          customPrompt: reviewPrompt // NEW: Send custom prompt
+          customPrompt: reviewPrompt
         }),
       });
 
@@ -198,11 +199,13 @@ Your response:`); // NEW: Customizable review prompt
     }
 
     try {
-      const response = await fetch(`${API_URL}/api/review/questions/${encodeURIComponent(selectedAnime)}/score/1,2`);
+      const response = await fetch(`${API_URL}/api/review/questions/${encodeURIComponent(selectedAnime)}/score/1,2,3,4`);
       const data = await response.json();
       
       if (data.success) {
         setQuestionsToDelete(data.questions);
+        // NEW: Initially select all questions
+        setSelectedQuestionIds(new Set(data.questions.map(q => q.id)));
         setShowDeletePreview(true);
       } else {
         setError('Failed to fetch questions for deletion preview');
@@ -213,9 +216,38 @@ Your response:`); // NEW: Customizable review prompt
     }
   };
 
+  // NEW: Toggle individual question selection
+  const toggleQuestionSelection = (questionId) => {
+    setSelectedQuestionIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
+  };
+
+  // NEW: Select all questions
+  const selectAllQuestions = () => {
+    setSelectedQuestionIds(new Set(questionsToDelete.map(q => q.id)));
+  };
+
+  // NEW: Deselect all questions
+  const deselectAllQuestions = () => {
+    setSelectedQuestionIds(new Set());
+  };
+
+  // MODIFIED: Execute delete only for selected questions
   const executeDelete = async () => {
-    if (questionsToDelete.length === 0) {
-      setError('No questions to delete');
+    if (selectedQuestionIds.size === 0) {
+      setError('No questions selected for deletion');
+      return;
+    }
+
+    // Show confirmation dialog
+    if (!window.confirm(`Are you sure you want to delete ${selectedQuestionIds.size} selected questions? This action cannot be undone.`)) {
       return;
     }
 
@@ -223,7 +255,7 @@ Your response:`); // NEW: Customizable review prompt
     setError('');
 
     try {
-      const questionIds = questionsToDelete.map(q => q.id);
+      const questionIds = Array.from(selectedQuestionIds);
       
       const response = await fetch(`${API_URL}/api/review/questions/bulk`, {
         method: 'DELETE',
@@ -238,6 +270,7 @@ Your response:`); // NEW: Customizable review prompt
       if (data.success) {
         console.log(`[Delete] Successfully deleted ${data.deletedCount} questions`);
         setQuestionsToDelete([]);
+        setSelectedQuestionIds(new Set());
         setShowDeletePreview(false);
         
         // Refresh stats
@@ -372,7 +405,7 @@ Your response:`); // NEW: Customizable review prompt
           </div>
         </div>
 
-        {/* NEW: Custom Review Prompt Section */}
+        {/* Custom Review Prompt Section */}
         <div className="mt-6 pt-6 border-t border-gray-200">
           <h4 className="text-md font-medium text-gray-900 mb-3">🤖 Custom Review Prompt</h4>
           <p className="text-sm text-gray-600 mb-3">
@@ -534,76 +567,126 @@ Your response:`); // NEW: Customizable review prompt
               </div>
             ) : (
               <>
+                {/* ENHANCED: Selection summary and controls */}
                 <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-4">
-                  <h4 className="font-medium text-red-800">
-                    {questionsToDelete.length} questions will be deleted
-                  </h4>
+                  <div className="flex justify-between items-center mb-2">
+                    <h4 className="font-medium text-red-800">
+                      {selectedQuestionIds.size} of {questionsToDelete.length} questions selected for deletion
+                    </h4>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={selectAllQuestions}
+                        className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        onClick={deselectAllQuestions}
+                        className="px-3 py-1 text-sm bg-white text-red-700 border border-red-300 rounded hover:bg-red-50 transition-colors"
+                      >
+                        Deselect All
+                      </button>
+                    </div>
+                  </div>
                   <p className="text-sm text-red-600 mt-1">
-                    This action cannot be undone. Review the questions below before proceeding.
+                    This action cannot be undone. Review the questions below and select which ones to delete.
                   </p>
                 </div>
 
+                {/* ENHANCED: Questions list with checkboxes */}
                 <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-md">
                   <div className="divide-y divide-gray-200">
                     {questionsToDelete.map((question) => (
-                      <div key={question.id} className="p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <h5 className="font-medium text-gray-900">{question.question}</h5>
-                          <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(question.reviewScore)}`}>
-                            {question.reviewScore}/5
-                          </span>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-2 text-sm">
-                          {question.options.map((option, index) => (
-                            <div
-                              key={index}
-                              className={`p-2 rounded ${
-                                index === question.correctAnswer
-                                  ? 'bg-green-50 border border-green-200 text-green-800'
-                                  : 'bg-gray-50 text-gray-700'
-                              }`}
-                            >
-                              {String.fromCharCode(65 + index)}. {option}
-                              {index === question.correctAnswer && ' ✓'}
+                      <div 
+                        key={question.id} 
+                        className={`p-4 transition-colors ${
+                          selectedQuestionIds.has(question.id) 
+                            ? 'bg-red-50 border-l-4 border-red-400' 
+                            : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-start space-x-3">
+                          {/* Checkbox */}
+                          <input
+                            type="checkbox"
+                            checked={selectedQuestionIds.has(question.id)}
+                            onChange={() => toggleQuestionSelection(question.id)}
+                            className="mt-1 h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
+                          />
+                          
+                          {/* Question content */}
+                          <div className="flex-1">
+                            <div className="flex justify-between items-start mb-2">
+                              <h5 className="font-medium text-gray-900">{question.question}</h5>
+                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(question.reviewScore)}`}>
+                                {question.reviewScore}/5
+                              </span>
                             </div>
-                          ))}
-                        </div>
-                        
-                        <div className="mt-2 flex items-center space-x-4 text-xs text-gray-500">
-                          <span>Category: {question.category || 'None'}</span>
-                          <span>Page: {question.pageTitle || 'Unknown'}</span>
+                            
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                              {question.options.map((option, index) => (
+                                <div
+                                  key={index}
+                                  className={`p-2 rounded ${
+                                    index === question.correctAnswer
+                                      ? 'bg-green-50 border border-green-200 text-green-800'
+                                      : 'bg-gray-50 text-gray-700'
+                                  }`}
+                                >
+                                  {String.fromCharCode(65 + index)}. {option}
+                                  {index === question.correctAnswer && ' ✓'}
+                                </div>
+                              ))}
+                            </div>
+                            
+                            <div className="mt-2 flex items-center space-x-4 text-xs text-gray-500">
+                              <span>Category: {question.category || 'None'}</span>
+                              <span>Page: {question.pageTitle || 'Unknown'}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex justify-end space-x-3 pt-4 border-t">
-                  <button
-                    onClick={() => setShowDeletePreview(false)}
-                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={executeDelete}
-                    disabled={isDeleting}
-                    className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                      isDeleting
-                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        : 'bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500'
-                    }`}
-                  >
-                    {isDeleting ? (
-                      <div className="flex items-center">
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                        Deleting...
-                      </div>
-                    ) : (
-                      `Delete ${questionsToDelete.length} Questions`
-                    )}
-                  </button>
+                {/* ENHANCED: Action buttons with selection count */}
+                <div className="flex justify-between items-center pt-4 border-t">
+                  <div className="text-sm text-gray-600">
+                    {selectedQuestionIds.size === 0 
+                      ? 'No questions selected' 
+                      : `${selectedQuestionIds.size} question${selectedQuestionIds.size !== 1 ? 's' : ''} will be deleted`
+                    }
+                  </div>
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={() => {
+                        setShowDeletePreview(false);
+                        setSelectedQuestionIds(new Set());
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={executeDelete}
+                      disabled={isDeleting || selectedQuestionIds.size === 0}
+                      className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                        isDeleting || selectedQuestionIds.size === 0
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500'
+                      }`}
+                    >
+                      {isDeleting ? (
+                        <div className="flex items-center">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                          Deleting...
+                        </div>
+                      ) : (
+                        `Delete ${selectedQuestionIds.size} Selected Question${selectedQuestionIds.size !== 1 ? 's' : ''}`
+                      )}
+                    </button>
+                  </div>
                 </div>
               </>
             )}
