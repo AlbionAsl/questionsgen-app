@@ -8,6 +8,20 @@ export default function QuestionReview({ socket }) {
   const [animeList, setAnimeList] = useState([]);
   const [batchSize, setBatchSize] = useState(10);
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
+  const [reviewPrompt, setReviewPrompt] = useState(`Rate these {count} anime quiz questions about "{animeName}" on a scale of 1-5:
+
+5 = Excellent (specific details, clear question, balanced options)
+4 = Good (clear question, mostly specific, good options)
+3 = Acceptable (basic question, adequate options)
+2 = Poor (vague question, obvious wrong answers)
+1 = Terrible (broken question, impossible to answer)
+
+{questions}
+
+RESPOND WITH ONLY A JSON ARRAY OF {count} INTEGER SCORES:
+Example: [4, 5, 3, 2, 4, 5, 1, 3, 4, 2]
+
+Your response:`); // NEW: Customizable review prompt
   const [reviewStats, setReviewStats] = useState(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewProgress, setReviewProgress] = useState(null);
@@ -158,7 +172,8 @@ export default function QuestionReview({ socket }) {
         body: JSON.stringify({
           animeName: selectedAnime,
           batchSize: batchSize,
-          model: selectedModel
+          model: selectedModel,
+          customPrompt: reviewPrompt // NEW: Send custom prompt
         }),
       });
 
@@ -355,6 +370,27 @@ export default function QuestionReview({ socket }) {
               {isReviewing ? 'Reviewing...' : 'Start Review'}
             </button>
           </div>
+        </div>
+
+        {/* NEW: Custom Review Prompt Section */}
+        <div className="mt-6 pt-6 border-t border-gray-200">
+          <h4 className="text-md font-medium text-gray-900 mb-3">🤖 Custom Review Prompt</h4>
+          <p className="text-sm text-gray-600 mb-3">
+            Customize how the AI reviews questions. Use placeholders: 
+            <code className="text-xs bg-gray-100 px-1 rounded">{'{count}'}</code>, 
+            <code className="text-xs bg-gray-100 px-1 rounded">{'{animeName}'}</code>, 
+            <code className="text-xs bg-gray-100 px-1 rounded">{'{questions}'}</code>
+          </p>
+          <textarea
+            value={reviewPrompt}
+            onChange={(e) => setReviewPrompt(e.target.value)}
+            rows={8}
+            className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-sm"
+            placeholder="Enter your custom review prompt here..."
+          />
+          <p className="mt-2 text-xs text-gray-500">
+            The AI must return a JSON array of scores (1-5) matching the number of questions being reviewed.
+          </p>
         </div>
       </div>
 

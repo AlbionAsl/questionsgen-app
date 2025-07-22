@@ -22,7 +22,6 @@ export default function PopularPages({ onStart }) {
       'Real-life Counterpart',
       'Credits',
       'Notes',
-      'Trivia',
       'Behind the Scenes',
       'Production',
       'Voice Actors',
@@ -37,7 +36,11 @@ export default function PopularPages({ onStart }) {
       'Filler',
       'Movies',
       'OVA',
-      'Spin-offs'
+      'Spin-offs',
+      'Video Games',
+      'Other Media',
+      'Translation and Dub Issues',
+      'Translation',
     ]
   });
 

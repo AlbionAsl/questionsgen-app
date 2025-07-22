@@ -1,13 +1,13 @@
 // server/routes/questionReview.js
 const express = require('express');
 const router = express.Router();
-const QuestionReviewService = require('../services/questionReviewService'); // CHANGED: Use simple service
+const simpleQuestionReviewService = require('../services/simpleQuestionReviewService'); // CHANGED: Use simple service
 
 // Get review statistics for an anime
 router.get('/stats/:animeName', async (req, res) => {
   try {
     const { animeName } = req.params;
-    const stats = await QuestionReviewService.getReviewStats(animeName);
+    const stats = await simpleQuestionReviewService.getReviewStats(animeName);
     res.json(stats);
   } catch (error) {
     console.error('Error fetching review stats:', error.message);
@@ -20,7 +20,8 @@ router.post('/review', async (req, res) => {
   const {
     animeName,
     batchSize = 10,
-    model = 'gemini-2.5-flash'
+    model = 'gemini-2.5-flash',
+    customPrompt // NEW: Accept custom prompt from frontend
   } = req.body;
 
   if (!animeName) {
@@ -32,6 +33,7 @@ router.post('/review', async (req, res) => {
 
   try {
     console.log(`[API] Starting simple review process ${processId} for ${animeName}`);
+    console.log(`[API] Using custom prompt: ${customPrompt ? 'Yes' : 'No (default)'}`);
     
     // Create socket emitter for progress updates
     const socketEmitter = (event, data) => {
@@ -49,11 +51,12 @@ router.post('/review', async (req, res) => {
           model 
         });
 
-        const results = await QuestionReviewService.reviewQuestions( // CHANGED: Use simple service
+        const results = await simpleQuestionReviewService.reviewQuestions(
           animeName,
           batchSize,
           model,
-          socketEmitter
+          socketEmitter,
+          customPrompt // NEW: Pass custom prompt to service
         );
 
         socketEmitter('completed', {
@@ -94,7 +97,7 @@ router.get('/questions/:animeName/score/:scores', async (req, res) => {
       return res.status(400).json({ error: 'Invalid scores parameter. Use format like "1,2"' });
     }
 
-    const questions = await QuestionReviewService.getQuestionsByScore(animeName, scoreArray); // CHANGED: Use simple service
+    const questions = await simpleQuestionReviewService.getQuestionsByScore(animeName, scoreArray); // CHANGED: Use simple service
     res.json({
       success: true,
       questions,
@@ -119,7 +122,7 @@ router.delete('/questions/bulk', async (req, res) => {
 
     console.log(`[API] Bulk delete request for ${questionIds.length} questions`);
 
-    const result = await QuestionReviewService.bulkDeleteQuestions(questionIds); // CHANGED: Use simple service
+    const result = await simpleQuestionReviewService.bulkDeleteQuestions(questionIds); // CHANGED: Use simple service
     
     res.json({
       success: true,

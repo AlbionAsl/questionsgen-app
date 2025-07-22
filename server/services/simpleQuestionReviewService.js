@@ -1,13 +1,14 @@
-// server/services/QuestionReviewService.js
+// server/services/simpleQuestionReviewService.js
 const { getDb } = require('../config/firebase');
 const admin = require('firebase-admin');
 
-class QuestionReviewService {
+class SimpleQuestionReviewService {
   constructor() {}
 
   // Main method - just score questions and update Firestore
-  async reviewQuestions(animeName, batchSize = 10, model = 'gemini-2.5-flash', socketEmitter = null) {
+  async reviewQuestions(animeName, batchSize = 10, model = 'gemini-2.5-flash', socketEmitter = null, customPrompt = null) {
     console.log(`[SimpleReview] Starting review for ${animeName} with batch size ${batchSize}`);
+    console.log(`[SimpleReview] Using custom prompt: ${customPrompt ? 'Yes' : 'No (default)'}`);
     
     try {
       // Get unreviewed questions
@@ -44,8 +45,8 @@ class QuestionReviewService {
         }
 
         try {
-          // Get scores from AI
-          const scores = await this.getScoresFromAI(batch, model, animeName);
+          // Get scores from AI (pass custom prompt)
+          const scores = await this.getScoresFromAI(batch, model, animeName, customPrompt);
           
           // Update database with scores
           await this.updateQuestionsWithScores(batch, scores);
@@ -111,11 +112,14 @@ class QuestionReviewService {
   }
 
   // Get scores from AI (simplified approach)
-  async getScoresFromAI(questions, model, animeName) {
+  async getScoresFromAI(questions, model, animeName, customPrompt = null) {
     console.log(`[SimpleReview] Getting scores from AI for ${questions.length} questions using ${model}`);
+    console.log(`[SimpleReview] Using custom prompt: ${customPrompt ? 'Yes' : 'No'}`);
     
-    // Build simple prompt that only asks for scores
-    const prompt = this.buildScoreOnlyPrompt(questions, animeName);
+    // Build prompt (use custom if provided, otherwise default)
+    const prompt = customPrompt 
+      ? this.buildCustomPrompt(questions, animeName, customPrompt)
+      : this.buildScoreOnlyPrompt(questions, animeName);
     
     try {
       if (model.includes('gemini')) {
@@ -130,7 +134,32 @@ class QuestionReviewService {
     }
   }
 
-  // Build prompt that ONLY asks for scores
+  // NEW: Build custom prompt using user's template
+  buildCustomPrompt(questions, animeName, customPrompt) {
+    const questionsText = questions.map((q, index) => {
+      const optionsText = q.options.map((option, i) => `${String.fromCharCode(65 + i)}. ${option}`).join('\n');
+      const correctLetter = String.fromCharCode(65 + q.correctAnswer);
+      
+      return `Question ${index + 1}:
+${q.question}
+${optionsText}
+Correct Answer: ${correctLetter}`;
+    }).join('\n\n');
+
+    console.log(`[SimpleReview] Building custom prompt with ${questions.length} questions for ${animeName}`);
+    
+    // Replace placeholders in custom prompt
+    const finalPrompt = customPrompt
+      .replace(/\{count\}/g, questions.length.toString())
+      .replace(/\{animeName\}/g, animeName)
+      .replace(/\{questions\}/g, questionsText);
+
+    console.log(`[SimpleReview] Custom prompt preview:`, finalPrompt.substring(0, 200) + '...');
+    
+    return finalPrompt;
+  }
+
+  // Build prompt that ONLY asks for scores (default)
   buildScoreOnlyPrompt(questions, animeName) {
     const questionsText = questions.map((q, index) => {
       const optionsText = q.options.map((option, i) => `${String.fromCharCode(65 + i)}. ${option}`).join('\n');
@@ -375,4 +404,4 @@ Your response:`;
   }
 }
 
-module.exports = new QuestionReviewService();
+module.exports = new SimpleQuestionReviewService();
