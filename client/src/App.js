@@ -7,7 +7,7 @@ import History from './components/History';
 import PopularPages from './components/PopularPages';
 import QuestionReview from './components/QuestionReview'; // NEW: Import QuestionReview
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('generate');
