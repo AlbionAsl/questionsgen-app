@@ -1,0 +1,11 @@
+[build]
+  publish = "client/build"
+  command = "npm run heroku-postbuild"
+
+[build.environment]
+  CI = ""
+  
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -57,8 +57,8 @@ export default function PopularPages({ onStart }) {
   const [aiProviderStats, setAiProviderStats] = useState(null);
   const [customSkipSection, setCustomSkipSection] = useState(''); // NEW: For adding custom sections
 
-  // Default models - will be replaced by dynamic loading
-  const defaultModels = [
+  // FIX: Move defaultModels inside useMemo to prevent dependency issues
+  const defaultModels = useMemo(() => [
     { 
       id: 'gpt-4o-mini', 
       name: 'GPT-4o Mini', 
@@ -101,7 +101,7 @@ export default function PopularPages({ onStart }) {
       provider: 'gemini',
       category: 'Google Gemini Models'
     }
-  ];
+  ], []);
 
   // Common anime presets
   const animePresets = [
@@ -182,7 +182,7 @@ export default function PopularPages({ onStart }) {
     }
   ];
 
-  // Memoized functions to avoid ESLint warnings
+  // FIX: Add defaultModels to dependency array
   const fetchAvailableModels = useCallback(async () => {
     try {
       const response = await fetch(`${API_URL}/api/ai/models`);

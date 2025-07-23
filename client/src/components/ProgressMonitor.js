@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -8,6 +8,47 @@ export default function ProgressMonitor({ processId, socket, onComplete }) {
   const [prompts, setPrompts] = useState([]); // NEW: Store prompts
   const [loading, setLoading] = useState(true);
   const [expandedPrompts, setExpandedPrompts] = useState(new Set()); // NEW: Track expanded prompts
+
+  // FIX: Move fetchProcessStatus inside useCallback to prevent dependency issues
+  const fetchProcessStatus = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_URL}/api/generation/status/${processId}`);
+      const data = await response.json();
+      setProcess(data);
+      setLogs(data.logs || []);
+    } catch (error) {
+      console.error('Error fetching process status:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [processId]);
+
+  // FIX: Create callback functions to prevent dependency warnings
+  const handleLog = useCallback((log) => {
+    setLogs(prev => [...prev, log]);
+  }, []);
+
+  const handleProgress = useCallback((progress) => {
+    setProcess(prev => ({ ...prev, progress }));
+  }, []);
+
+  const handleQuestionsGenerated = useCallback(({ count, total }) => {
+    setProcess(prev => ({ ...prev, questionsGenerated: total }));
+  }, []);
+
+  const handleCompleted = useCallback((data) => {
+    setProcess(prev => ({ ...prev, status: 'completed', ...data }));
+    if (onComplete) onComplete();
+  }, [onComplete]);
+
+  const handleError = useCallback(({ message }) => {
+    setProcess(prev => ({ ...prev, status: 'error', error: message }));
+  }, []);
+
+  // NEW: Handle prompt data
+  const handlePromptGenerated = useCallback((promptData) => {
+    setPrompts(prev => [...prev, { ...promptData, id: `prompt_${prev.length + 1}` }]);
+  }, []);
 
   useEffect(() => {
     if (!processId) {
@@ -36,46 +77,7 @@ export default function ProgressMonitor({ processId, socket, onComplete }) {
         socket.off(`generation:${processId}:promptGenerated`); // NEW: Cleanup
       };
     }
-  }, [processId, socket]);
-
-  const fetchProcessStatus = async () => {
-    try {
-      const response = await fetch(`${API_URL}/api/generation/status/${processId}`);
-      const data = await response.json();
-      setProcess(data);
-      setLogs(data.logs || []);
-    } catch (error) {
-      console.error('Error fetching process status:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLog = (log) => {
-    setLogs(prev => [...prev, log]);
-  };
-
-  const handleProgress = (progress) => {
-    setProcess(prev => ({ ...prev, progress }));
-  };
-
-  const handleQuestionsGenerated = ({ count, total }) => {
-    setProcess(prev => ({ ...prev, questionsGenerated: total }));
-  };
-
-  const handleCompleted = (data) => {
-    setProcess(prev => ({ ...prev, status: 'completed', ...data }));
-    if (onComplete) onComplete();
-  };
-
-  const handleError = ({ message }) => {
-    setProcess(prev => ({ ...prev, status: 'error', error: message }));
-  };
-
-  // NEW: Handle prompt data
-  const handlePromptGenerated = (promptData) => {
-    setPrompts(prev => [...prev, { ...promptData, id: `prompt_${prev.length + 1}` }]);
-  };
+  }, [processId, socket, fetchProcessStatus, handleLog, handleProgress, handleQuestionsGenerated, handleCompleted, handleError, handlePromptGenerated]);
 
   const handleStop = async () => {
     try {

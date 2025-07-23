@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -29,8 +29,8 @@ export default function GenerationForm({ onStart }) {
   const [availableModels, setAvailableModels] = useState([]);
   const [aiProviderStats, setAiProviderStats] = useState(null);
 
-  // Available AI models - now loaded dynamically
-  const defaultModels = [
+  // FIX: Move defaultModels inside useMemo to prevent dependency issues
+  const defaultModels = useMemo(() => [
     { 
       id: 'gpt-4o-mini', 
       name: 'GPT-4o Mini', 
@@ -73,6 +73,16 @@ export default function GenerationForm({ onStart }) {
       provider: 'gemini',
       category: 'Google Gemini Models'
     }
+  ], []);
+
+  // Common anime presets
+  const animePresets = [
+    { name: 'One Piece', wiki: 'onepiece' },
+    { name: 'Naruto', wiki: 'naruto' },
+    { name: 'Attack on Titan', wiki: 'attackontitan' },
+    { name: 'My Hero Academia', wiki: 'myheroacademia' },
+    { name: 'Demon Slayer', wiki: 'kimetsu-no-yaiba' },
+    { name: 'Jujutsu Kaisen', wiki: 'jujutsu-kaisen' }
   ];
 
   // Prompt presets for different question styles
@@ -99,17 +109,7 @@ export default function GenerationForm({ onStart }) {
     }
   ];
 
-  // Common anime presets
-  const animePresets = [
-    { name: 'One Piece', wiki: 'onepiece' },
-    { name: 'Naruto', wiki: 'naruto' },
-    { name: 'Attack on Titan', wiki: 'attackontitan' },
-    { name: 'My Hero Academia', wiki: 'myheroacademia' },
-    { name: 'Demon Slayer', wiki: 'kimetsu-no-yaiba' },
-    { name: 'Jujutsu Kaisen', wiki: 'jujutsu-kaisen' }
-  ];
-
-  // Memoized functions to avoid ESLint warnings
+  // FIX: Add defaultModels to dependency array
   const fetchAvailableModels = useCallback(async () => {
     try {
       const response = await fetch(`${API_URL}/api/ai/models`);

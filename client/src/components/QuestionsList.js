@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -10,11 +10,8 @@ export default function QuestionsList({ stats }) {
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
 
-  useEffect(() => {
-    fetchQuestions();
-  }, [selectedAnime, selectedCategory]);
-
-  const fetchQuestions = async () => {
+  // FIX: Move fetchQuestions inside useCallback to prevent dependency issues
+  const fetchQuestions = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
@@ -30,7 +27,12 @@ export default function QuestionsList({ stats }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedAnime, selectedCategory]);
+
+  // FIX: Add fetchQuestions to the dependency array
+  useEffect(() => {
+    fetchQuestions();
+  }, [fetchQuestions]);
 
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this question?')) return;
