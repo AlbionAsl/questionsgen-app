@@ -57,7 +57,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
     cors: {
-        origin: "http://localhost:3000",
+        origin: process.env.NODE_ENV === 'production' ? false : "http://localhost:3000",
         methods: ["GET", "POST", "PUT", "DELETE"]
     }
 });
@@ -118,7 +118,9 @@ console.log('=== ROUTE DEBUG END ===');
 // Then your existing code continues...
 
 // Middleware
-app.use(cors({ origin: "http://localhost:3000" }));
+app.use(cors({ 
+    origin: process.env.NODE_ENV === 'production' ? false : "http://localhost:3000" 
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -159,10 +161,12 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// Serve frontend only in production
+// 🚀 CRITICAL FIX: Serve frontend in production
 if (process.env.NODE_ENV === 'production') {
+    // Serve static files from the React app build directory
     app.use(express.static(path.join(__dirname, '../client/build')));
 
+    // Handle React routing, return all requests to React app
     app.get('*', (req, res) => {
         res.sendFile(path.join(__dirname, '../client/build/index.html'));
     });
@@ -204,6 +208,8 @@ async function testAIProviders() {
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`Environment: ${process.env.NODE_ENV}`);
+    console.log(`Serving static files: ${process.env.NODE_ENV === 'production' ? 'Yes' : 'No'}`);
     
     // Test AI providers after server starts
     testAIProviders();
