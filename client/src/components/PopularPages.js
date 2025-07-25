@@ -11,7 +11,7 @@ export default function PopularPages({ onStart }) {
     questionsPerChunk: 4,
     openaiModel: 'gpt-4o-mini',
     promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.',
-    skipSections: [ // NEW: Default sections to skip
+    skipSections: [ // Default sections to skip
       'References',
       'Navigation', 
       'Site Navigation',
@@ -44,6 +44,15 @@ export default function PopularPages({ onStart }) {
     ]
   });
 
+  // NEW: State for generation settings management
+  const [savedSettings, setSavedSettings] = useState([]);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [settingsModalMode, setSettingsModalMode] = useState('save'); // 'save' or 'load'
+  const [newSettingName, setNewSettingName] = useState('');
+  const [loadingSettings, setLoadingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+
+  // Existing state variables (unchanged)
   const [animeSearchResults, setAnimeSearchResults] = useState([]);
   const [popularPages, setPopularPages] = useState([]);
   const [filteredPages, setFilteredPages] = useState([]);
@@ -55,9 +64,9 @@ export default function PopularPages({ onStart }) {
   const [processingStats, setProcessingStats] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
   const [aiProviderStats, setAiProviderStats] = useState(null);
-  const [customSkipSection, setCustomSkipSection] = useState(''); // NEW: For adding custom sections
+  const [customSkipSection, setCustomSkipSection] = useState('');
 
-  // FIX: Move defaultModels inside useMemo to prevent dependency issues
+  // Default models (unchanged)
   const defaultModels = useMemo(() => [
     { 
       id: 'gpt-4o-mini', 
@@ -103,7 +112,7 @@ export default function PopularPages({ onStart }) {
     }
   ], []);
 
-  // Common anime presets
+  // Common anime presets (unchanged)
   const animePresets = [
     { name: 'One Piece', wiki: 'onepiece' },
     { name: 'Naruto', wiki: 'naruto' },
@@ -113,7 +122,7 @@ export default function PopularPages({ onStart }) {
     { name: 'Jujutsu Kaisen', wiki: 'jujutsu-kaisen' }
   ];
 
-  // Prompt presets
+  // Prompt presets (unchanged)
   const promptPresets = [
     {
       name: 'Challenging & Specific (Default)',
@@ -137,7 +146,7 @@ export default function PopularPages({ onStart }) {
     }
   ];
 
-  // NEW: Section skip presets for different types of content
+  // Section skip presets (unchanged)
   const sectionSkipPresets = [
     {
       name: 'Default (Recommended)',
@@ -182,7 +191,12 @@ export default function PopularPages({ onStart }) {
     }
   ];
 
-  // FIX: Add defaultModels to dependency array
+  // NEW: Load saved settings on component mount
+  useEffect(() => {
+    fetchSavedSettings();
+  }, []);
+
+  // Existing useEffect hooks (unchanged)
   const fetchAvailableModels = useCallback(async () => {
     try {
       const response = await fetch(`${API_URL}/api/ai/models`);
@@ -254,7 +268,7 @@ export default function PopularPages({ onStart }) {
     }
   }, []);
 
-  // Effects with proper dependencies
+  // Existing useEffect hooks
   useEffect(() => {
     fetchAvailableModels();
     fetchAIProviderStats();
@@ -285,6 +299,145 @@ export default function PopularPages({ onStart }) {
     }
   }, [searchTerm, popularPages]);
 
+  // NEW: Fetch saved generation settings
+  const fetchSavedSettings = async () => {
+    setLoadingSettings(true);
+    try {
+      const response = await fetch(`${API_URL}/api/generation/settings`);
+      const data = await response.json();
+      if (data.success) {
+        setSavedSettings(data.settings || []);
+      }
+    } catch (error) {
+      console.error('Error fetching saved settings:', error);
+    } finally {
+      setLoadingSettings(false);
+    }
+  };
+
+  // NEW: Save current settings
+  const saveCurrentSettings = async () => {
+    if (!newSettingName.trim()) {
+      setSettingsError('Please enter a name for the settings');
+      return;
+    }
+
+    if (!formData.animeName || !formData.fandomWikiName) {
+      setSettingsError('Please fill in anime name and wiki name before saving');
+      return;
+    }
+
+    try {
+      const settingsData = {
+        name: newSettingName.trim(),
+        animeName: formData.animeName,
+        fandomWikiName: formData.fandomWikiName,
+        selectedPages: formData.selectedPages,
+        maxApiCalls: formData.maxApiCalls,
+        questionsPerChunk: formData.questionsPerChunk,
+        openaiModel: formData.openaiModel,
+        promptInstructions: formData.promptInstructions,
+        skipSections: formData.skipSections
+      };
+
+      const response = await fetch(`${API_URL}/api/generation/settings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settingsData),
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        await fetchSavedSettings(); // Refresh the list
+        setNewSettingName('');
+        setShowSettingsModal(false);
+        setSettingsError('');
+      } else {
+        setSettingsError(data.error || 'Failed to save settings');
+      }
+    } catch (error) {
+      setSettingsError('Error saving settings: ' + error.message);
+    }
+  };
+
+  // NEW: Load selected settings
+  const loadSettings = async (settingId) => {
+    try {
+      const response = await fetch(`${API_URL}/api/generation/settings/${settingId}`);
+      const data = await response.json();
+      
+      if (data.success && data.setting) {
+        const setting = data.setting;
+        
+        // Update form data with loaded settings
+        setFormData({
+          animeName: setting.animeName || '',
+          fandomWikiName: setting.fandomWikiName || '',
+          selectedPages: setting.selectedPages || [],
+          maxApiCalls: setting.maxApiCalls || 10,
+          questionsPerChunk: setting.questionsPerChunk || 4,
+          openaiModel: setting.openaiModel || 'gpt-4o-mini',
+          promptInstructions: setting.promptInstructions || formData.promptInstructions,
+          skipSections: setting.skipSections || []
+        });
+
+        // Clear search results and anime search
+        setAnimeSearchResults([]);
+        
+        // If wiki name is loaded, fetch its popular pages
+        if (setting.fandomWikiName) {
+          fetchPopularPages(setting.fandomWikiName);
+          fetchProcessingStats(setting.fandomWikiName);
+        }
+
+        setShowSettingsModal(false);
+        setSettingsError('');
+        
+        // Update usage count
+        await fetch(`${API_URL}/api/generation/settings/${settingId}/use`, {
+          method: 'POST'
+        });
+        
+        await fetchSavedSettings(); // Refresh to show updated usage count
+      } else {
+        setSettingsError('Failed to load settings');
+      }
+    } catch (error) {
+      setSettingsError('Error loading settings: ' + error.message);
+    }
+  };
+
+  // NEW: Delete settings
+  const deleteSettings = async (settingId) => {
+    if (!window.confirm('Are you sure you want to delete this setting?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/api/generation/settings/${settingId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        await fetchSavedSettings(); // Refresh the list
+      }
+    } catch (error) {
+      console.error('Error deleting settings:', error);
+    }
+  };
+
+  // NEW: Open settings modal
+  const openSettingsModal = (mode) => {
+    setSettingsModalMode(mode);
+    setShowSettingsModal(true);
+    setSettingsError('');
+    setNewSettingName('');
+  };
+
+  // Existing handler functions (unchanged)
   const handlePageToggle = (pageTitle) => {
     setFormData(prev => ({
       ...prev,
@@ -315,7 +468,6 @@ export default function PopularPages({ onStart }) {
     }));
   };
 
-  // NEW: Section skip management functions
   const handleSkipSectionAdd = (sectionName) => {
     if (sectionName && !formData.skipSections.includes(sectionName)) {
       setFormData(prev => ({
@@ -363,9 +515,9 @@ export default function PopularPages({ onStart }) {
         },
         body: JSON.stringify({
           ...formData,
-          categories: [], // No categories for popular pages
-          individualPages: formData.selectedPages, // Use selected pages as individual pages
-          skipSections: formData.skipSections // NEW: Pass skip sections
+          categories: [],
+          individualPages: formData.selectedPages,
+          skipSections: formData.skipSections
         }),
       });
 
@@ -390,7 +542,6 @@ export default function PopularPages({ onStart }) {
     }));
   };
 
-  // Group models by provider
   const groupedModels = availableModels.reduce((groups, model) => {
     const category = model.category || (model.provider === 'openai' ? 'OpenAI Models' : 'Google Gemini Models');
     if (!groups[category]) {
@@ -400,18 +551,42 @@ export default function PopularPages({ onStart }) {
     return groups;
   }, {});
 
-  // Check if a provider is available
   const isProviderAvailable = (provider) => {
-    return aiProviderStats?.[provider]?.available ?? true; // Default to available if stats not loaded
+    return aiProviderStats?.[provider]?.available ?? true;
   };
 
   return (
     <div className="max-w-6xl mx-auto">
       <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Generate from Popular Pages</h2>
-        <p className="text-gray-600 mb-6">
-          Generate questions from the most revised (and likely most popular) pages on the wiki using advanced AI models.
-        </p>
+        <div className="flex justify-between items-center mb-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">Generate from Popular Pages</h2>
+            <p className="text-gray-600">
+              Generate questions from the most revised (and likely most popular) pages on the wiki using advanced AI models.
+            </p>
+          </div>
+          
+          {/* NEW: Settings Management Buttons */}
+          <div className="flex space-x-2">
+            <button
+              onClick={() => openSettingsModal('save')}
+              disabled={!formData.animeName || !formData.fandomWikiName}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                !formData.animeName || !formData.fandomWikiName
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-green-600 text-white hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500'
+              }`}
+            >
+              💾 Save Settings
+            </button>
+            <button
+              onClick={() => openSettingsModal('load')}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 text-sm font-medium"
+            >
+              📂 Load Settings
+            </button>
+          </div>
+        </div>
 
         {error && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
@@ -497,7 +672,7 @@ export default function PopularPages({ onStart }) {
             </p>
           </div>
 
-          {/* NEW: Section Filtering Configuration */}
+          {/* Section Filtering Configuration */}
           <div className="border-t pt-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">🚫 Section Filtering</h3>
             <p className="text-sm text-gray-600 mb-4">
@@ -722,7 +897,7 @@ export default function PopularPages({ onStart }) {
               </div>
             )}
             
-            {/* AI Model Selection - Now grouped by provider */}
+            {/* AI Model Selection */}
             <div className="mb-6">
               <label className="block text-sm font-medium text-gray-700 mb-3">AI Model</label>
               <div className="space-y-4">
@@ -868,6 +1043,143 @@ export default function PopularPages({ onStart }) {
           </div>
         </div>
       </div>
+
+      {/* NEW: Settings Management Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-medium text-gray-900">
+                {settingsModalMode === 'save' ? '💾 Save Generation Settings' : '📂 Load Generation Settings'}
+              </h3>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <span className="sr-only">Close</span>
+                ✕
+              </button>
+            </div>
+
+            {settingsError && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+                <p className="text-sm text-red-600">{settingsError}</p>
+              </div>
+            )}
+
+            {settingsModalMode === 'save' ? (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Save your current configuration so you can easily reuse it later.
+                </p>
+                
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Settings Name
+                  </label>
+                  <input
+                    type="text"
+                    value={newSettingName}
+                    onChange={(e) => setNewSettingName(e.target.value)}
+                    placeholder="e.g., Naruto Character Questions, One Piece Arc Analysis"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                <div className="bg-gray-50 p-4 rounded-md mb-4">
+                  <h4 className="text-sm font-medium text-gray-700 mb-2">Current Settings Preview:</h4>
+                  <div className="text-sm text-gray-600 space-y-1">
+                    <p><strong>Anime:</strong> {formData.animeName || 'Not set'}</p>
+                    <p><strong>Wiki:</strong> {formData.fandomWikiName || 'Not set'}</p>
+                    <p><strong>Pages:</strong> {formData.selectedPages.length} selected</p>
+                    <p><strong>Model:</strong> {formData.openaiModel}</p>
+                    <p><strong>Max API Calls:</strong> {formData.maxApiCalls}</p>
+                    <p><strong>Skip Sections:</strong> {formData.skipSections.length} configured</p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end space-x-3">
+                  <button
+                    onClick={() => setShowSettingsModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveCurrentSettings}
+                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700"
+                  >
+                    Save Settings
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm text-gray-600 mb-4">
+                  Choose a saved configuration to load. This will replace your current settings.
+                </p>
+
+                {loadingSettings ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <span className="ml-2 text-gray-600">Loading saved settings...</span>
+                  </div>
+                ) : savedSettings.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <p>No saved settings found.</p>
+                    <p className="text-sm mt-1">Create your first saved setting by configuring your generation options and clicking "Save Settings".</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {savedSettings.map((setting) => (
+                      <div key={setting.id} className="border border-gray-200 rounded-md p-4 hover:bg-gray-50">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1">
+                            <h4 className="font-medium text-gray-900">{setting.name}</h4>
+                            <div className="text-sm text-gray-600 mt-1 space-y-1">
+                              <p><strong>Anime:</strong> {setting.animeName}</p>
+                              <p><strong>Wiki:</strong> {setting.fandomWikiName}</p>
+                              <p><strong>Pages:</strong> {setting.selectedPages?.length || 0} selected</p>
+                              <p><strong>Model:</strong> {setting.openaiModel}</p>
+                              <div className="flex items-center space-x-4 text-xs text-gray-500 mt-2">
+                                <span>Created: {new Date(setting.createdAt).toLocaleDateString()}</span>
+                                <span>Used: {setting.usageCount || 0} times</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex space-x-2 ml-4">
+                            <button
+                              onClick={() => loadSettings(setting.id)}
+                              className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                            >
+                              Load
+                            </button>
+                            <button
+                              onClick={() => deleteSettings(setting.id)}
+                              className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex justify-end mt-4">
+                  <button
+                    onClick={() => setShowSettingsModal(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

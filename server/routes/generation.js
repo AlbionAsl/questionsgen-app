@@ -3,8 +3,411 @@ const router = express.Router();
 const animeService = require('../services/animeService');
 const scrapingService = require('../services/scrapingService');
 const questionsService = require('../services/questionsService');
+const { getDb } = require('../config/firebase'); // NEW: Import Firebase for settings
+const admin = require('firebase-admin'); // NEW: Import admin for Firestore operations
 
 const activeProcesses = new Map();
+
+// NEW: Generation Settings Management Routes
+
+// Get all saved generation settings
+router.get('/settings', async (req, res) => {
+  try {
+    const db = getDb();
+    const snapshot = await db.collection('generationSettings')
+      .orderBy('createdAt', 'desc')
+      .limit(50) // Limit to most recent 50 settings
+      .get();
+
+    const settings = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt ? doc.data().createdAt.toDate().toISOString() : null,
+      updatedAt: doc.data().updatedAt ? doc.data().updatedAt.toDate().toISOString() : null,
+    }));
+
+    console.log(`[Settings] Retrieved ${settings.length} saved generation settings`);
+    
+    res.json({
+      success: true,
+      settings,
+      count: settings.length
+    });
+  } catch (error) {
+    console.error('Error fetching generation settings:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get a specific generation setting by ID
+router.get('/settings/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    
+    const doc = await db.collection('generationSettings').doc(id).get();
+    
+    if (!doc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: 'Generation setting not found'
+      });
+    }
+
+    const setting = {
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt ? doc.data().createdAt.toDate().toISOString() : null,
+      updatedAt: doc.data().updatedAt ? doc.data().updatedAt.toDate().toISOString() : null,
+    };
+
+    console.log(`[Settings] Retrieved setting: ${setting.name}`);
+    
+    res.json({
+      success: true,
+      setting
+    });
+  } catch (error) {
+    console.error('Error fetching generation setting:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Save a new generation setting
+router.post('/settings', async (req, res) => {
+  try {
+    const {
+      name,
+      animeName,
+      fandomWikiName,
+      selectedPages,
+      maxApiCalls,
+      questionsPerChunk,
+      openaiModel,
+      promptInstructions,
+      skipSections
+    } = req.body;
+
+    // Validate required fields
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Setting name is required'
+      });
+    }
+
+    if (!animeName || !fandomWikiName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Anime name and fandom wiki name are required'
+      });
+    }
+
+    const db = getDb();
+    
+    // Check if a setting with this name already exists
+    const existingSnapshot = await db.collection('generationSettings')
+      .where('name', '==', name.trim())
+      .limit(1)
+      .get();
+
+    if (!existingSnapshot.empty) {
+      return res.status(400).json({
+        success: false,
+        error: 'A setting with this name already exists'
+      });
+    }
+
+    // Create the new setting document
+    const settingData = {
+      name: name.trim(),
+      animeName: animeName.trim(),
+      fandomWikiName: fandomWikiName.trim(),
+      selectedPages: selectedPages || [],
+      maxApiCalls: parseInt(maxApiCalls) || 10,
+      questionsPerChunk: parseInt(questionsPerChunk) || 4,
+      openaiModel: openaiModel || 'gpt-4o-mini',
+      promptInstructions: promptInstructions || '',
+      skipSections: skipSections || [],
+      usageCount: 0,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const docRef = await db.collection('generationSettings').add(settingData);
+    
+    console.log(`[Settings] Saved new setting: "${name}" (ID: ${docRef.id})`);
+    console.log(`[Settings] - Anime: ${animeName}`);
+    console.log(`[Settings] - Wiki: ${fandomWikiName}`);
+    console.log(`[Settings] - Pages: ${selectedPages?.length || 0} selected`);
+    console.log(`[Settings] - Model: ${openaiModel}`);
+    console.log(`[Settings] - Skip sections: ${skipSections?.length || 0} configured`);
+
+    res.json({
+      success: true,
+      message: 'Generation setting saved successfully',
+      settingId: docRef.id,
+      setting: {
+        id: docRef.id,
+        ...settingData,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error saving generation setting:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Update an existing generation setting
+router.put('/settings/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      animeName,
+      fandomWikiName,
+      selectedPages,
+      maxApiCalls,
+      questionsPerChunk,
+      openaiModel,
+      promptInstructions,
+      skipSections
+    } = req.body;
+
+    const db = getDb();
+    
+    // Check if the setting exists
+    const doc = await db.collection('generationSettings').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: 'Generation setting not found'
+      });
+    }
+
+    // Validate required fields
+    if (!name || !name.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Setting name is required'
+      });
+    }
+
+    if (!animeName || !fandomWikiName) {
+      return res.status(400).json({
+        success: false,
+        error: 'Anime name and fandom wiki name are required'
+      });
+    }
+
+    // Check if another setting with this name exists (excluding current one)
+    const existingSnapshot = await db.collection('generationSettings')
+      .where('name', '==', name.trim())
+      .get();
+
+    const duplicateExists = existingSnapshot.docs.some(doc => doc.id !== id);
+    if (duplicateExists) {
+      return res.status(400).json({
+        success: false,
+        error: 'A setting with this name already exists'
+      });
+    }
+
+    // Update the setting
+    const updateData = {
+      name: name.trim(),
+      animeName: animeName.trim(),
+      fandomWikiName: fandomWikiName.trim(),
+      selectedPages: selectedPages || [],
+      maxApiCalls: parseInt(maxApiCalls) || 10,
+      questionsPerChunk: parseInt(questionsPerChunk) || 4,
+      openaiModel: openaiModel || 'gpt-4o-mini',
+      promptInstructions: promptInstructions || '',
+      skipSections: skipSections || [],
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('generationSettings').doc(id).update(updateData);
+    
+    console.log(`[Settings] Updated setting: "${name}" (ID: ${id})`);
+
+    res.json({
+      success: true,
+      message: 'Generation setting updated successfully',
+      settingId: id
+    });
+  } catch (error) {
+    console.error('Error updating generation setting:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Delete a generation setting
+router.delete('/settings/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    
+    // Check if the setting exists
+    const doc = await db.collection('generationSettings').doc(id).get();
+    if (!doc.exists) {
+      return res.status(404).json({
+        success: false,
+        error: 'Generation setting not found'
+      });
+    }
+
+    const settingName = doc.data().name;
+    
+    // Delete the setting
+    await db.collection('generationSettings').doc(id).delete();
+    
+    console.log(`[Settings] Deleted setting: "${settingName}" (ID: ${id})`);
+
+    res.json({
+      success: true,
+      message: 'Generation setting deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting generation setting:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Increment usage count when a setting is used
+router.post('/settings/:id/use', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    
+    // Check if the setting exists and increment usage count
+    const docRef = db.collection('generationSettings').doc(id);
+    
+    await db.runTransaction(async (transaction) => {
+      const doc = await transaction.get(docRef);
+      
+      if (!doc.exists) {
+        throw new Error('Generation setting not found');
+      }
+      
+      const currentUsageCount = doc.data().usageCount || 0;
+      
+      transaction.update(docRef, {
+        usageCount: currentUsageCount + 1,
+        lastUsed: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    
+    console.log(`[Settings] Incremented usage count for setting ID: ${id}`);
+
+    res.json({
+      success: true,
+      message: 'Usage count updated'
+    });
+  } catch (error) {
+    console.error('Error updating setting usage:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Get settings statistics
+router.get('/settings/stats/overview', async (req, res) => {
+  try {
+    const db = getDb();
+    const snapshot = await db.collection('generationSettings').get();
+
+    const stats = {
+      totalSettings: snapshot.size,
+      byAnime: {},
+      byModel: {},
+      totalUsage: 0,
+      mostUsedSettings: [],
+      recentSettings: []
+    };
+
+    const settings = [];
+
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      settings.push({
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt ? data.createdAt.toDate() : null,
+        lastUsed: data.lastUsed ? data.lastUsed.toDate() : null
+      });
+
+      // Count by anime
+      if (data.animeName) {
+        stats.byAnime[data.animeName] = (stats.byAnime[data.animeName] || 0) + 1;
+      }
+
+      // Count by model
+      if (data.openaiModel) {
+        stats.byModel[data.openaiModel] = (stats.byModel[data.openaiModel] || 0) + 1;
+      }
+
+      // Sum total usage
+      stats.totalUsage += data.usageCount || 0;
+    });
+
+    // Get most used settings (top 5)
+    stats.mostUsedSettings = settings
+      .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
+      .slice(0, 5)
+      .map(s => ({
+        id: s.id,
+        name: s.name,
+        animeName: s.animeName,
+        usageCount: s.usageCount || 0
+      }));
+
+    // Get recent settings (last 5)
+    stats.recentSettings = settings
+      .sort((a, b) => (b.createdAt || new Date(0)) - (a.createdAt || new Date(0)))
+      .slice(0, 5)
+      .map(s => ({
+        id: s.id,
+        name: s.name,
+        animeName: s.animeName,
+        createdAt: s.createdAt ? s.createdAt.toISOString() : null
+      }));
+
+    console.log(`[Settings] Generated stats for ${stats.totalSettings} settings`);
+
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (error) {
+    console.error('Error fetching settings statistics:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// EXISTING ROUTES (unchanged)
 
 router.post('/start', async (req, res) => {
   const {
@@ -16,7 +419,7 @@ router.post('/start', async (req, res) => {
     questionsPerChunk,
     openaiModel,
     promptInstructions,
-    skipSections // NEW: Accept skip sections from UI
+    skipSections // Accept skip sections from UI
   } = req.body;
 
   const processId = Date.now().toString();
@@ -39,7 +442,7 @@ router.post('/start', async (req, res) => {
       logs: [],
       openaiModel: openaiModel || 'gpt-4o-mini',
       promptInstructions: promptInstructions || 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.',
-      skipSections: skipSections || [] // NEW: Store skip sections in process
+      skipSections: skipSections || [] // Store skip sections in process
     };
 
     activeProcesses.set(processId, process);
@@ -53,7 +456,7 @@ router.post('/start', async (req, res) => {
       individualPages || [],
       maxApiCalls || 10,
       questionsPerChunk || 4,
-      skipSections || [], // NEW: Pass skip sections to generation function
+      skipSections || [], // Pass skip sections to generation function
       io
     );
 
@@ -157,7 +560,7 @@ router.get('/wiki/:wikiName/categories/search', async (req, res) => {
   }
 });
 
-// NEW: Get popular pages from Special:MostRevisions
+// Get popular pages from Special:MostRevisions
 router.get('/wiki/:wikiName/popular-pages', async (req, res) => {
   try {
     const { limit } = req.query;
@@ -191,7 +594,7 @@ async function generateQuestions(
   individualPages,
   maxApiCalls,
   questionsPerChunk, // This is now used as a multiplier/fallback
-  skipSections, // NEW: Skip sections parameter
+  skipSections, // Skip sections parameter
   io
 ) {
   const process = activeProcesses.get(processId);
@@ -202,7 +605,7 @@ async function generateQuestions(
     emit('log', logEntry);
   };
 
-  // NEW: Create socket emitter for prompt data
+  // Create socket emitter for prompt data
   const socketEmitter = (event, data) => {
     emit(event, data);
   };
@@ -249,7 +652,7 @@ async function generateQuestions(
 
       log(`Processing page: ${page.title}`);
       
-      // NEW: Pass skip sections to fetchPageContent
+      // Pass skip sections to fetchPageContent
       const sections = await scrapingService.fetchPageContent(page.title, fandomWikiName, {
         skipSections: skipSections || []
       });
@@ -281,7 +684,7 @@ async function generateQuestions(
           log(`Generating ${section.questionCount} questions for section: "${section.title}"`);
           
           // Generate questions using the calculated amount for this section
-          // NEW: Pass socket emitter for prompt monitoring
+          // Pass socket emitter for prompt monitoring
           const questions = await questionsService.generateQuestions(
             section.content, 
             section.questionCount, // Use calculated question count per section
@@ -292,7 +695,7 @@ async function generateQuestions(
               model: process.openaiModel,
               promptInstructions: process.promptInstructions,
               sectionTitle: section.title, // Add section context
-              socketEmitter: socketEmitter // NEW: Pass socket emitter
+              socketEmitter: socketEmitter // Pass socket emitter
             }
           );
 
@@ -338,7 +741,7 @@ async function generateQuestions(
     process.duration = Date.now() - new Date(process.startTime).getTime();
     log(`Generation completed! Generated a total of ${process.questionsGenerated} questions.`, 'success');
     
-    // NEW: Log final filtering statistics
+    // Log final filtering statistics
     if (skipSections && skipSections.length > 0) {
       log(`Section filtering was active during this generation (${skipSections.length} section types filtered).`, 'info');
     }
