@@ -2,13 +2,16 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
 const crypto = require('crypto');
-const { getDb } = require('../config/firebase');
-const admin = require('firebase-admin');
+const { supabase } = require('../config/supabase');
+
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.5',
+};
 
 class ScrapingService {
-  constructor() {
-    // Remove in-memory storage - using Firestore instead
-  }
+  constructor() {}
 
   createFandomUrl(topic) {
     return `https://${topic}.fandom.com/api.php`;
@@ -26,7 +29,7 @@ class ScrapingService {
     };
 
     try {
-      const response = await axios.get(url, { params });
+      const response = await axios.get(url, { params, headers: BROWSER_HEADERS });
       const data = response.data;
 
       if (!data.query || !data.query.categorymembers) {
@@ -52,7 +55,7 @@ class ScrapingService {
     };
 
     try {
-      const response = await axios.get(url, { params });
+      const response = await axios.get(url, { params, headers: BROWSER_HEADERS });
       const data = response.data;
 
       if (data.error) {
@@ -489,38 +492,32 @@ class ScrapingService {
     return crypto.createHash('md5').update(data).digest('hex');
   }
 
-  // Check if section was already processed using Firestore (unchanged)
-  async isSectionProcessed(sectionId, fandomName) {
-    try {
-      const db = getDb();
-      const doc = await db.collection('processedSections').doc(sectionId).get();
-      return doc.exists;
-    } catch (error) {
-      console.error('Error checking if section is processed:', error.message);
-      // If there's an error, assume not processed to be safe
-      return false;
-    }
+  async isSectionProcessed(sectionId) {
+    const { data, error } = await supabase
+      .from('processed_sections')
+      .select('section_id')
+      .eq('section_id', sectionId)
+      .maybeSingle();
+
+    if (error) throw error;
+    return !!data;
   }
 
-  // Mark section as processed in Firestore (unchanged)
-  async markSectionAsProcessed(sectionId, fandomName, metadata = {}) {
-    try {
-      const db = getDb();
-      await db.collection('processedSections').doc(sectionId).set({
-        sectionId,
-        fandomName,
-        category: metadata.category || '',
-        pageTitle: metadata.pageTitle || '',
-        sectionTitle: metadata.sectionTitle || '',
-        wordCount: metadata.wordCount || 0,
-        questionsGenerated: metadata.questionsGenerated || 0,
-        processedAt: admin.firestore.FieldValue.serverTimestamp()
+  async markSectionAsProcessed(sectionId, fandomWikiName, metadata = {}) {
+    const { error } = await supabase
+      .from('processed_sections')
+      .upsert({
+        section_id: sectionId,
+        fandom_wiki_name: fandomWikiName,
+        category: metadata.category || null,
+        page_title: metadata.pageTitle || '',
+        section_title: metadata.sectionTitle || '',
+        word_count: metadata.wordCount || 0,
+        questions_generated: metadata.questionsGenerated || 0,
+        processed_at: new Date().toISOString(),
       });
-      console.log(`Marked section ${sectionId} as processed`);
-    } catch (error) {
-      console.error('Error marking section as processed:', error.message);
-      // Don't throw error here as it's not critical for the main flow
-    }
+
+    if (error) throw error;
   }
 
   // Remaining methods unchanged...
@@ -610,274 +607,76 @@ class ScrapingService {
     }
   }
 
-  // Get popular pages from Special:MostRevisions (unchanged)
-  async getPopularPages(fandomWikiName, limit = 100) {
-    console.log(`[PopularPages] Fetching popular pages for ${fandomWikiName}...`);
-    
+  async getPopularPages(fandomWikiName, limit = 500) {
+    console.log(`[PopularPages] Fetching popular pages for ${fandomWikiName} via API...`);
+
+    const url = this.createFandomUrl(fandomWikiName);
+    const params = {
+      action: 'query',
+      list: 'querypage',
+      qppage: 'Mostrevisions',
+      qplimit: Math.min(limit, 500),
+      format: 'json',
+    };
+
     try {
-      // Go directly to scraping the Special:MostRevisions page as it's more reliable
-      return await this.getPopularPagesViaScraping(fandomWikiName, limit);
-      
+      const response = await axios.get(url, { params, headers: BROWSER_HEADERS });
+      const data = response.data;
+
+      if (data.error) {
+        throw new Error(data.error.info || 'MediaWiki API error');
+      }
+
+      const results = data.query?.querypage?.results;
+      if (!results || results.length === 0) {
+        console.warn('[PopularPages] querypage returned no results');
+        return { pages: [], hasMore: false };
+      }
+
+      const SYSTEM_PREFIXES = ['Category:', 'Template:', 'File:', 'User:', 'Special:', 'MediaWiki:', 'Talk:'];
+
+      const pages = results
+        .filter(p => {
+          const title = p.title || '';
+          return title.length > 2 && !SYSTEM_PREFIXES.some(prefix => title.startsWith(prefix));
+        })
+        .map(p => ({
+          title: p.title,
+          revisions: parseInt(p.value) || 0,
+          url: `/wiki/${encodeURIComponent((p.title).replace(/ /g, '_'))}`,
+        }))
+        .sort((a, b) => b.revisions - a.revisions)
+        .slice(0, limit);
+
+      console.log(`[PopularPages] Found ${pages.length} pages via API`);
+      return { pages, hasMore: pages.length === limit };
+
     } catch (error) {
-      console.error('[PopularPages] Error fetching popular pages:', error.message);
+      console.error('[PopularPages] Error:', error.message);
       throw new Error(`Failed to fetch popular pages: ${error.message}`);
     }
   }
 
-  // Scrape the Special:MostRevisions page directly (unchanged)
-  async getPopularPagesViaScraping(fandomWikiName, limit = 100) {
-    console.log(`[PopularPages] Scraping Special:MostRevisions page...`);
-    
-    const url = `https://${fandomWikiName}.fandom.com/wiki/Special:MostRevisions`;
-    const params = {
-      limit: Math.min(limit, 500),
-      offset: 0
+  async getProcessingStats(fandomWikiName) {
+    const { data, error } = await supabase
+      .from('processed_sections')
+      .select('*')
+      .eq('fandom_wiki_name', fandomWikiName);
+
+    if (error) throw error;
+
+    const stats = {
+      fandomWikiName,
+      totalSectionsProcessed: data.length,
+      totalQuestionsGenerated: data.reduce((sum, s) => sum + (s.questions_generated || 0), 0),
+      byPage: {},
     };
 
-    try {
-      const response = await axios.get(url, { params });
-      const $ = cheerio.load(response.data);
-      
-      const pages = [];
-      
-      console.log(`[PopularPages] Page loaded, looking for revision data...`);
-      
-      // Look for the ordered list that contains the most revisions
-      // The structure is usually: <ol><li>1. <a href="/wiki/PageName">Page Name</a> ‎ (X revisions)</li></ol>
-      const possibleSelectors = [
-        'ol li',  // Most likely structure
-        '.mw-content-text ol li',
-        '.mw-parser-output ol li',
-        'ul li',  // Fallback to unordered list
-        '.mw-content-text ul li'
-      ];
+    data.forEach(s => {
+      stats.byPage[s.page_title] = (stats.byPage[s.page_title] || 0) + 1;
+    });
 
-      let foundPages = false;
-      
-      for (const selector of possibleSelectors) {
-        const items = $(selector);
-        console.log(`[PopularPages] Trying selector "${selector}" - found ${items.length} items`);
-        
-        if (items.length > 0) {
-          items.each((index, element) => {
-            if (pages.length >= limit) return;
-            
-            const $item = $(element);
-            const fullText = $item.text().trim();
-            console.log(`[PopularPages] Processing item ${index + 1}: "${fullText}"`);
-            
-            // Look for the link within the item
-            const link = $item.find('a').first();
-            
-            if (link.length > 0) {
-              const title = link.text().trim();
-              const href = link.attr('href');
-              
-              // Extract revision count from the full text
-              // Look for patterns like "(12,338 revisions)" or "(12338 revisions)"
-              const revisionPatterns = [
-                /\(([0-9,]+)\s+revisions?\)/i,
-                /\(([0-9,]+)\s+revision\)/i,
-                /‎\s*\(([0-9,]+)\s+revisions?\)/i,
-                /\s+\(([0-9,]+)\s+revisions?\)/i
-              ];
-              
-              let revisions = 0;
-              for (const pattern of revisionPatterns) {
-                const match = fullText.match(pattern);
-                if (match) {
-                  // Remove commas and parse as integer
-                  revisions = parseInt(match[1].replace(/,/g, ''));
-                  console.log(`[PopularPages] Found revisions: ${revisions} for page: ${title}`);
-                  break;
-                }
-              }
-              
-              // Filter out system pages and ensure it's a content page
-              if (title && 
-                  href && 
-                  href.includes('/wiki/') &&
-                  !title.includes(':') && 
-                  !title.startsWith('Category:') &&
-                  !title.startsWith('Template:') &&
-                  !title.startsWith('File:') &&
-                  !title.startsWith('User:') &&
-                  !title.startsWith('Special:') &&
-                  !title.startsWith('MediaWiki:') &&
-                  title.length > 2 &&
-                  revisions > 0) {  // Only include pages with actual revision counts
-                
-                pages.push({
-                  title: title,
-                  revisions: revisions,
-                  url: href
-                });
-                foundPages = true;
-                console.log(`[PopularPages] Added page: ${title} (${revisions} revisions)`);
-              }
-            }
-          });
-          
-          if (foundPages && pages.length > 0) {
-            console.log(`[PopularPages] Successfully found ${pages.length} pages with selector "${selector}"`);
-            break;
-          }
-        }
-      }
-
-      // If we still haven't found pages, try a more direct approach
-      if (!foundPages || pages.length === 0) {
-        console.log(`[PopularPages] Standard selectors failed, trying direct text parsing...`);
-        
-        // Look for text patterns that match the revision format directly
-        const bodyText = $('body').text();
-        const lines = bodyText.split('\n');
-        
-        for (const line of lines) {
-          if (pages.length >= limit) break;
-          
-          // Look for lines that contain revision information
-          const revisionMatch = line.match(/(\d+)\.\s*(.+?)\s*\(([0-9,]+)\s+revisions?\)/i);
-          if (revisionMatch) {
-            const title = revisionMatch[2].trim();
-            const revisions = parseInt(revisionMatch[3].replace(/,/g, ''));
-            
-            if (title && 
-                !title.includes(':') && 
-                !title.startsWith('Category:') &&
-                !title.startsWith('Template:') &&
-                !title.startsWith('File:') &&
-                !title.startsWith('User:') &&
-                title.length > 2 &&
-                revisions > 0) {
-              
-              pages.push({
-                title: title,
-                revisions: revisions,
-                url: `/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`
-              });
-              foundPages = true;
-              console.log(`[PopularPages] Direct parsing found: ${title} (${revisions} revisions)`);
-            }
-          }
-        }
-      }
-
-      // Sort by revision count (highest first)
-      pages.sort((a, b) => b.revisions - a.revisions);
-
-      console.log(`[PopularPages] Final result: ${pages.length} pages`);
-      if (pages.length > 0) {
-        console.log(`[PopularPages] Top 5 pages:`, pages.slice(0, 5).map(p => `${p.title} (${p.revisions} revisions)`));
-      } else {
-        console.log(`[PopularPages] No pages found - this might indicate a parsing issue`);
-        // Log some of the page structure for debugging
-        console.log(`[PopularPages] Page title:`, $('title').text());
-        console.log(`[PopularPages] First few ol li items:`, $('ol li').slice(0, 3).map((i, el) => $(el).text()).get());
-      }
-
-      return {
-        pages: pages,
-        hasMore: pages.length === limit
-      };
-
-    } catch (error) {
-      console.error('[PopularPages] Scraping approach failed:', error.message);
-      throw new Error(`Failed to scrape popular pages: ${error.message}`);
-    }
-  }
-
-  // Get processing statistics for a fandom (unchanged)
-  async getProcessingStats(fandomName) {
-    try {
-      const db = getDb();
-      
-      // Check both old chunk-based and new section-based processing
-      const chunksSnapshot = await db.collection('processedChunks')
-        .where('fandomName', '==', fandomName)
-        .get();
-        
-      const sectionsSnapshot = await db.collection('processedSections')
-        .where('fandomName', '==', fandomName)
-        .get();
-
-      const stats = {
-        totalChunks: chunksSnapshot.size, // Legacy chunk processing
-        totalSections: sectionsSnapshot.size, // New section processing
-        byCategory: {},
-        byPage: {},
-        lastProcessed: null
-      };
-
-      // Process legacy chunks
-      chunksSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        
-        if (data.category) {
-          stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
-        }
-        
-        if (data.pageTitle) {
-          stats.byPage[data.pageTitle] = (stats.byPage[data.pageTitle] || 0) + 1;
-        }
-
-        if (data.processedAt && (!stats.lastProcessed || data.processedAt.toDate() > stats.lastProcessed)) {
-          stats.lastProcessed = data.processedAt.toDate();
-        }
-      });
-
-      // Process new sections
-      sectionsSnapshot.docs.forEach(doc => {
-        const data = doc.data();
-        
-        if (data.category) {
-          stats.byCategory[data.category] = (stats.byCategory[data.category] || 0) + 1;
-        }
-        
-        if (data.pageTitle) {
-          stats.byPage[data.pageTitle] = (stats.byPage[data.pageTitle] || 0) + 1;
-        }
-
-        if (data.processedAt && (!stats.lastProcessed || data.processedAt.toDate() > stats.lastProcessed)) {
-          stats.lastProcessed = data.processedAt.toDate();
-        }
-      });
-
-      return stats;
-    } catch (error) {
-      console.error('Error fetching processing stats:', error.message);
-      return { totalChunks: 0, totalSections: 0, byCategory: {}, byPage: {}, lastProcessed: null };
-    }
-  }
-
-  // Clean up old processed chunks (optional maintenance function) (unchanged)
-  async cleanupOldChunks(olderThanDays = 30) {
-    try {
-      const db = getDb();
-      const cutoffDate = new Date();
-      cutoffDate.setDate(cutoffDate.getDate() - olderThanDays);
-
-      const snapshot = await db.collection('processedChunks')
-        .where('processedAt', '<', cutoffDate)
-        .get();
-
-      if (snapshot.empty) {
-        console.log('No old chunks to clean up');
-        return 0;
-      }
-
-      const batch = db.batch();
-      snapshot.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
-
-      await batch.commit();
-      console.log(`Cleaned up ${snapshot.size} old processed chunks`);
-      return snapshot.size;
-    } catch (error) {
-      console.error('Error cleaning up old chunks:', error.message);
-      return 0;
-    }
+    return stats;
   }
 }
 

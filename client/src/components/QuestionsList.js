@@ -5,18 +5,25 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 export default function QuestionsList({ stats }) {
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedAnime, setSelectedAnime] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('');
+  const [categories, setCategories] = useState([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [selectedStatus, setSelectedStatus] = useState('');
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [showExportModal, setShowExportModal] = useState(false);
 
-  // FIX: Move fetchQuestions inside useCallback to prevent dependency issues
+  useEffect(() => {
+    fetch(`${API_URL}/api/review/categories`)
+      .then(r => r.json())
+      .then(data => setCategories(data.categories || []))
+      .catch(err => console.error('Error fetching categories:', err));
+  }, []);
+
   const fetchQuestions = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (selectedAnime) params.append('animeName', selectedAnime);
-      if (selectedCategory) params.append('category', selectedCategory);
+      if (selectedCategoryId) params.append('categoryId', selectedCategoryId);
+      if (selectedStatus) params.append('status', selectedStatus);
       params.append('limit', '100');
 
       const response = await fetch(`${API_URL}/api/questions?${params}`);
@@ -27,9 +34,8 @@ export default function QuestionsList({ stats }) {
     } finally {
       setLoading(false);
     }
-  }, [selectedAnime, selectedCategory]);
+  }, [selectedCategoryId, selectedStatus]);
 
-  // FIX: Add fetchQuestions to the dependency array
   useEffect(() => {
     fetchQuestions();
   }, [fetchQuestions]);
@@ -48,9 +54,9 @@ export default function QuestionsList({ stats }) {
   const handleEdit = (question) => {
     setEditingQuestion({
       ...question,
-      newQuestion: question.question,
+      newQuestion: question.question_text,
       newOptions: [...question.options],
-      newCorrectAnswer: question.correctAnswer
+      newCorrectAnswer: question.correct_answer
     });
   };
 
@@ -70,9 +76,9 @@ export default function QuestionsList({ stats }) {
         q.id === editingQuestion.id
           ? {
               ...q,
-              question: editingQuestion.newQuestion,
+              question_text: editingQuestion.newQuestion,
               options: editingQuestion.newOptions,
-              correctAnswer: editingQuestion.newCorrectAnswer
+              correct_answer: editingQuestion.newCorrectAnswer
             }
           : q
       ));
@@ -89,8 +95,8 @@ export default function QuestionsList({ stats }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           format,
-          animeName: selectedAnime,
-          category: selectedCategory
+          categoryId: selectedCategoryId,
+          status: selectedStatus
         })
       });
 
@@ -124,33 +130,31 @@ export default function QuestionsList({ stats }) {
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Question Database</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700">Filter by Anime</label>
+            <label className="block text-sm font-medium text-gray-700">Filter by Manga</label>
             <select
-              value={selectedAnime}
-              onChange={(e) => setSelectedAnime(e.target.value)}
+              value={selectedCategoryId}
+              onChange={(e) => setSelectedCategoryId(e.target.value)}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             >
-              <option value="">All Animes</option>
-              {stats && Object.keys(stats.byAnime).map(anime => (
-                <option key={anime} value={anime}>
-                  {anime} ({stats.byAnime[anime]})
+              <option value="">All</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>
+                  {cat.name}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700">Filter by Category</label>
+            <label className="block text-sm font-medium text-gray-700">Filter by Status</label>
             <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             >
-              <option value="">All Categories</option>
-              {stats && Object.keys(stats.byCategory).map(category => (
-                <option key={category} value={category}>
-                  {category} ({stats.byCategory[category]})
-                </option>
-              ))}
+              <option value="">All Statuses</option>
+              <option value="approved">Approved</option>
+              <option value="unrated">Unrated</option>
+              <option value="rejected">Rejected</option>
             </select>
           </div>
           <div className="flex items-end">
@@ -162,6 +166,14 @@ export default function QuestionsList({ stats }) {
             </button>
           </div>
         </div>
+        {stats && (
+          <div className="mt-4 flex gap-6 text-sm text-gray-500">
+            <span>Total: <strong>{stats.total}</strong></span>
+            {stats.byStatus && Object.entries(stats.byStatus).map(([s, n]) => (
+              <span key={s}>{s}: <strong>{n}</strong></span>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Questions List */}
@@ -226,7 +238,7 @@ export default function QuestionsList({ stats }) {
                 ) : (
                   <>
                     <div className="flex justify-between items-start mb-3">
-                      <h3 className="font-medium text-gray-900">{question.question}</h3>
+                      <h3 className="font-medium text-gray-900">{question.question_text}</h3>
                       <div className="flex space-x-2">
                         <button
                           onClick={() => handleEdit(question)}
@@ -247,20 +259,25 @@ export default function QuestionsList({ stats }) {
                         <div
                           key={index}
                           className={`text-sm ${
-                            index === question.correctAnswer
+                            index === question.correct_answer
                               ? 'text-green-600 font-medium'
                               : 'text-gray-600'
                           }`}
                         >
                           {index + 1}. {option}
-                          {index === question.correctAnswer && ' ✓'}
+                          {index === question.correct_answer && ' ✓'}
                         </div>
                       ))}
                     </div>
                     <div className="mt-3 flex items-center space-x-4 text-xs text-gray-500">
-                      <span>Anime: {question.animeName || 'Unknown'}</span>
-                      <span>Category: {question.category || 'None'}</span>
-                      <span>Page: {question.pageTitle || 'Unknown'}</span>
+                      <span>Manga: {question.categories?.name || `ID ${question.category_id}`}</span>
+                      <span>Status: {question.status || 'N/A'}</span>
+                      {question.review_score && <span>Score: {question.review_score}</span>}
+                      {question.source_url && (
+                        <a href={question.source_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                          Source
+                        </a>
+                      )}
                     </div>
                   </>
                 )}
@@ -294,7 +311,7 @@ export default function QuestionsList({ stats }) {
                 className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
               >
                 Cancel
-              </button>
+            </button>
             </div>
           </div>
         </div>

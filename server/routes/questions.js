@@ -1,17 +1,15 @@
-// server/routes/questions.js
 const express = require('express');
 const router = express.Router();
 const questionService = require('../services/questionsService');
-const { getDb } = require('../config/firebase');
-const admin = require('firebase-admin');
+const { supabase } = require('../config/supabase');
 
+// List questions — filter by categoryId (integer) or status
 router.get('/', async (req, res) => {
   try {
     const filters = {
-      animeId: req.query.animeId,
-      animeName: req.query.animeName,
-      category: req.query.category,
-      limit: parseInt(req.query.limit) || 50
+      categoryId: req.query.categoryId,
+      status: req.query.status,
+      limit: parseInt(req.query.limit) || 50,
     };
 
     const questions = await questionService.getQuestions(filters);
@@ -22,6 +20,7 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Question stats
 router.get('/stats', async (req, res) => {
   try {
     const stats = await questionService.getQuestionStats();
@@ -32,10 +31,15 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// Delete a question
 router.delete('/:id', async (req, res) => {
   try {
-    const db = getDb();
-    await db.collection('questions').doc(req.params.id).delete();
+    const { error } = await supabase
+      .from('questions')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) throw error;
     res.json({ message: 'Question deleted successfully' });
   } catch (error) {
     console.error('Error deleting question:', error);
@@ -43,18 +47,27 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// Edit a question
 router.put('/:id', async (req, res) => {
   try {
-    const db = getDb();
     const { question, options, correctAnswer } = req.body;
-    
-    await db.collection('questions').doc(req.params.id).update({
-      question,
-      options,
-      correctAnswer,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
+
+    let normalizedOptions = options;
+    if (options && !Array.isArray(options)) {
+      normalizedOptions = Object.values(options);
+    }
+
+    const { error } = await supabase
+      .from('questions')
+      .update({
+        question_text: question,
+        options: normalizedOptions,
+        correct_answer: correctAnswer,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id);
+
+    if (error) throw error;
     res.json({ message: 'Question updated successfully' });
   } catch (error) {
     console.error('Error updating question:', error);
@@ -62,6 +75,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+// Export questions
 router.post('/export', async (req, res) => {
   try {
     const { format = 'json', ...filters } = req.body;
@@ -84,17 +98,18 @@ router.post('/export', async (req, res) => {
 });
 
 function convertToCSV(questions) {
-  const headers = ['ID', 'Anime', 'Category', 'Question', 'Option 1', 'Option 2', 'Option 3', 'Option 4', 'Correct Answer'];
+  const headers = ['ID', 'Category ID', 'Question', 'Option 1', 'Option 2', 'Option 3', 'Option 4', 'Correct Answer', 'Status', 'Review Score'];
   const rows = questions.map(q => [
     q.id,
-    q.animeName || '',
-    q.category || '',
-    `"${q.question.replace(/"/g, '""')}"`,
-    `"${q.options[0].replace(/"/g, '""')}"`,
-    `"${q.options[1].replace(/"/g, '""')}"`,
-    `"${q.options[2].replace(/"/g, '""')}"`,
-    `"${q.options[3].replace(/"/g, '""')}"`,
-    q.correctAnswer + 1
+    q.category_id,
+    `"${(q.question_text || '').replace(/"/g, '""')}"`,
+    `"${(q.options[0] || '').replace(/"/g, '""')}"`,
+    `"${(q.options[1] || '').replace(/"/g, '""')}"`,
+    `"${(q.options[2] || '').replace(/"/g, '""')}"`,
+    `"${(q.options[3] || '').replace(/"/g, '""')}"`,
+    q.correct_answer + 1,
+    q.status || '',
+    q.review_score || '',
   ]);
 
   return [headers, ...rows].map(row => row.join(',')).join('\n');

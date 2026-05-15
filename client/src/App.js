@@ -60,9 +60,9 @@ export default function App() {
                   <span className="ml-2 font-semibold text-gray-900">{stats.total}</span>
                 </div>
                 <div>
-                  <span className="text-gray-500">Animes:</span>
+                  <span className="text-gray-500">Categories:</span>
                   <span className="ml-2 font-semibold text-gray-900">
-                    {Object.keys(stats.byAnime).length}
+                    {Object.keys(stats.byCategory || {}).length}
                   </span>
                 </div>
               </div>

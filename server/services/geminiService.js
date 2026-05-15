@@ -277,7 +277,7 @@ class GeminiService {
   }
 
   // Alternative method using structured output instead of function calling
-  async generateQuestionsStructured(prompt, model = 'gemini-2.5-flash') {
+  async generateQuestionsStructured(prompt, model = 'gemini-flash-latest') {
     const startTime = Date.now();
     console.log(`[Gemini] Starting structured output API call at ${new Date().toISOString()}`);
     console.log(`[Gemini] Using model: ${model}`);
@@ -465,7 +465,7 @@ class GeminiService {
 
       // Simple test with a basic prompt
       const testResponse = await this.client.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-flash-latest',
         contents: 'Hello, this is a test. Please respond with "Connection successful".',
       });
 
@@ -473,7 +473,7 @@ class GeminiService {
       return { 
         success: true, 
         response: testResponse.text,
-        model: 'gemini-2.5-flash'
+        model: 'gemini-flash-latest'
       };
     } catch (error) {
       console.error('[Gemini] Connection test failed:', error.message);
@@ -493,7 +493,7 @@ class GeminiService {
         supportsFunctionCalling: true,
       },
       {
-        id: 'gemini-2.5-flash',
+        id: 'gemini-flash-latest',
         name: 'Gemini 2.5 Flash',
         description: 'Fast and efficient, good for most use cases',
         provider: 'gemini',

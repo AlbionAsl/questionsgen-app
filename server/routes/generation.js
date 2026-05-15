@@ -3,411 +3,208 @@ const router = express.Router();
 const animeService = require('../services/animeService');
 const scrapingService = require('../services/scrapingService');
 const questionsService = require('../services/questionsService');
-const { getDb } = require('../config/firebase'); // NEW: Import Firebase for settings
-const admin = require('firebase-admin'); // NEW: Import admin for Firestore operations
+const { supabase } = require('../config/supabase');
 
 const activeProcesses = new Map();
 
-// NEW: Generation Settings Management Routes
+// Generation Settings Management Routes
 
-// Get all saved generation settings
 router.get('/settings', async (req, res) => {
   try {
-    const db = getDb();
-    const snapshot = await db.collection('generationSettings')
-      .orderBy('createdAt', 'desc')
-      .limit(50) // Limit to most recent 50 settings
-      .get();
+    const { data, error } = await supabase
+      .from('generation_settings')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
 
-    const settings = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt ? doc.data().createdAt.toDate().toISOString() : null,
-      updatedAt: doc.data().updatedAt ? doc.data().updatedAt.toDate().toISOString() : null,
-    }));
+    if (error) throw error;
 
-    console.log(`[Settings] Retrieved ${settings.length} saved generation settings`);
-    
-    res.json({
-      success: true,
-      settings,
-      count: settings.length
-    });
+    res.json({ success: true, settings: data, count: data.length });
   } catch (error) {
-    console.error('Error fetching generation settings:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get a specific generation setting by ID
-router.get('/settings/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const db = getDb();
-    
-    const doc = await db.collection('generationSettings').doc(id).get();
-    
-    if (!doc.exists) {
-      return res.status(404).json({
-        success: false,
-        error: 'Generation setting not found'
-      });
-    }
-
-    const setting = {
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt ? doc.data().createdAt.toDate().toISOString() : null,
-      updatedAt: doc.data().updatedAt ? doc.data().updatedAt.toDate().toISOString() : null,
-    };
-
-    console.log(`[Settings] Retrieved setting: ${setting.name}`);
-    
-    res.json({
-      success: true,
-      setting
-    });
-  } catch (error) {
-    console.error('Error fetching generation setting:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Save a new generation setting
-router.post('/settings', async (req, res) => {
-  try {
-    const {
-      name,
-      animeName,
-      fandomWikiName,
-      selectedPages,
-      maxApiCalls,
-      questionsPerChunk,
-      openaiModel,
-      promptInstructions,
-      skipSections
-    } = req.body;
-
-    // Validate required fields
-    if (!name || !name.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Setting name is required'
-      });
-    }
-
-    if (!animeName || !fandomWikiName) {
-      return res.status(400).json({
-        success: false,
-        error: 'Anime name and fandom wiki name are required'
-      });
-    }
-
-    const db = getDb();
-    
-    // Check if a setting with this name already exists
-    const existingSnapshot = await db.collection('generationSettings')
-      .where('name', '==', name.trim())
-      .limit(1)
-      .get();
-
-    if (!existingSnapshot.empty) {
-      return res.status(400).json({
-        success: false,
-        error: 'A setting with this name already exists'
-      });
-    }
-
-    // Create the new setting document
-    const settingData = {
-      name: name.trim(),
-      animeName: animeName.trim(),
-      fandomWikiName: fandomWikiName.trim(),
-      selectedPages: selectedPages || [],
-      maxApiCalls: parseInt(maxApiCalls) || 10,
-      questionsPerChunk: parseInt(questionsPerChunk) || 4,
-      openaiModel: openaiModel || 'gpt-4o-mini',
-      promptInstructions: promptInstructions || '',
-      skipSections: skipSections || [],
-      usageCount: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-
-    const docRef = await db.collection('generationSettings').add(settingData);
-    
-    console.log(`[Settings] Saved new setting: "${name}" (ID: ${docRef.id})`);
-    console.log(`[Settings] - Anime: ${animeName}`);
-    console.log(`[Settings] - Wiki: ${fandomWikiName}`);
-    console.log(`[Settings] - Pages: ${selectedPages?.length || 0} selected`);
-    console.log(`[Settings] - Model: ${openaiModel}`);
-    console.log(`[Settings] - Skip sections: ${skipSections?.length || 0} configured`);
-
-    res.json({
-      success: true,
-      message: 'Generation setting saved successfully',
-      settingId: docRef.id,
-      setting: {
-        id: docRef.id,
-        ...settingData,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    console.error('Error saving generation setting:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Update an existing generation setting
-router.put('/settings/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const {
-      name,
-      animeName,
-      fandomWikiName,
-      selectedPages,
-      maxApiCalls,
-      questionsPerChunk,
-      openaiModel,
-      promptInstructions,
-      skipSections
-    } = req.body;
-
-    const db = getDb();
-    
-    // Check if the setting exists
-    const doc = await db.collection('generationSettings').doc(id).get();
-    if (!doc.exists) {
-      return res.status(404).json({
-        success: false,
-        error: 'Generation setting not found'
-      });
-    }
-
-    // Validate required fields
-    if (!name || !name.trim()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Setting name is required'
-      });
-    }
-
-    if (!animeName || !fandomWikiName) {
-      return res.status(400).json({
-        success: false,
-        error: 'Anime name and fandom wiki name are required'
-      });
-    }
-
-    // Check if another setting with this name exists (excluding current one)
-    const existingSnapshot = await db.collection('generationSettings')
-      .where('name', '==', name.trim())
-      .get();
-
-    const duplicateExists = existingSnapshot.docs.some(doc => doc.id !== id);
-    if (duplicateExists) {
-      return res.status(400).json({
-        success: false,
-        error: 'A setting with this name already exists'
-      });
-    }
-
-    // Update the setting
-    const updateData = {
-      name: name.trim(),
-      animeName: animeName.trim(),
-      fandomWikiName: fandomWikiName.trim(),
-      selectedPages: selectedPages || [],
-      maxApiCalls: parseInt(maxApiCalls) || 10,
-      questionsPerChunk: parseInt(questionsPerChunk) || 4,
-      openaiModel: openaiModel || 'gpt-4o-mini',
-      promptInstructions: promptInstructions || '',
-      skipSections: skipSections || [],
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-
-    await db.collection('generationSettings').doc(id).update(updateData);
-    
-    console.log(`[Settings] Updated setting: "${name}" (ID: ${id})`);
-
-    res.json({
-      success: true,
-      message: 'Generation setting updated successfully',
-      settingId: id
-    });
-  } catch (error) {
-    console.error('Error updating generation setting:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Delete a generation setting
-router.delete('/settings/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const db = getDb();
-    
-    // Check if the setting exists
-    const doc = await db.collection('generationSettings').doc(id).get();
-    if (!doc.exists) {
-      return res.status(404).json({
-        success: false,
-        error: 'Generation setting not found'
-      });
-    }
-
-    const settingName = doc.data().name;
-    
-    // Delete the setting
-    await db.collection('generationSettings').doc(id).delete();
-    
-    console.log(`[Settings] Deleted setting: "${settingName}" (ID: ${id})`);
-
-    res.json({
-      success: true,
-      message: 'Generation setting deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting generation setting:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Increment usage count when a setting is used
-router.post('/settings/:id/use', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const db = getDb();
-    
-    // Check if the setting exists and increment usage count
-    const docRef = db.collection('generationSettings').doc(id);
-    
-    await db.runTransaction(async (transaction) => {
-      const doc = await transaction.get(docRef);
-      
-      if (!doc.exists) {
-        throw new Error('Generation setting not found');
-      }
-      
-      const currentUsageCount = doc.data().usageCount || 0;
-      
-      transaction.update(docRef, {
-        usageCount: currentUsageCount + 1,
-        lastUsed: admin.firestore.FieldValue.serverTimestamp()
-      });
-    });
-    
-    console.log(`[Settings] Incremented usage count for setting ID: ${id}`);
-
-    res.json({
-      success: true,
-      message: 'Usage count updated'
-    });
-  } catch (error) {
-    console.error('Error updating setting usage:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get settings statistics
 router.get('/settings/stats/overview', async (req, res) => {
   try {
-    const db = getDb();
-    const snapshot = await db.collection('generationSettings').get();
+    const { data, error } = await supabase
+      .from('generation_settings')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
 
     const stats = {
-      totalSettings: snapshot.size,
+      totalSettings: data.length,
       byAnime: {},
       byModel: {},
       totalUsage: 0,
       mostUsedSettings: [],
-      recentSettings: []
+      recentSettings: [],
     };
 
-    const settings = [];
-
-    snapshot.docs.forEach(doc => {
-      const data = doc.data();
-      settings.push({
-        id: doc.id,
-        ...data,
-        createdAt: data.createdAt ? data.createdAt.toDate() : null,
-        lastUsed: data.lastUsed ? data.lastUsed.toDate() : null
-      });
-
-      // Count by anime
-      if (data.animeName) {
-        stats.byAnime[data.animeName] = (stats.byAnime[data.animeName] || 0) + 1;
-      }
-
-      // Count by model
-      if (data.openaiModel) {
-        stats.byModel[data.openaiModel] = (stats.byModel[data.openaiModel] || 0) + 1;
-      }
-
-      // Sum total usage
-      stats.totalUsage += data.usageCount || 0;
+    data.forEach(s => {
+      if (s.anime_name) stats.byAnime[s.anime_name] = (stats.byAnime[s.anime_name] || 0) + 1;
+      if (s.model) stats.byModel[s.model] = (stats.byModel[s.model] || 0) + 1;
+      stats.totalUsage += s.usage_count || 0;
     });
 
-    // Get most used settings (top 5)
-    stats.mostUsedSettings = settings
-      .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
+    stats.mostUsedSettings = [...data]
+      .sort((a, b) => (b.usage_count || 0) - (a.usage_count || 0))
       .slice(0, 5)
-      .map(s => ({
-        id: s.id,
-        name: s.name,
-        animeName: s.animeName,
-        usageCount: s.usageCount || 0
-      }));
+      .map(s => ({ id: s.id, name: s.name, animeName: s.anime_name, usageCount: s.usage_count || 0 }));
 
-    // Get recent settings (last 5)
-    stats.recentSettings = settings
-      .sort((a, b) => (b.createdAt || new Date(0)) - (a.createdAt || new Date(0)))
-      .slice(0, 5)
-      .map(s => ({
-        id: s.id,
-        name: s.name,
-        animeName: s.animeName,
-        createdAt: s.createdAt ? s.createdAt.toISOString() : null
-      }));
+    stats.recentSettings = data.slice(0, 5)
+      .map(s => ({ id: s.id, name: s.name, animeName: s.anime_name, createdAt: s.created_at }));
 
-    console.log(`[Settings] Generated stats for ${stats.totalSettings} settings`);
-
-    res.json({
-      success: true,
-      stats
-    });
+    res.json({ success: true, stats });
   } catch (error) {
-    console.error('Error fetching settings statistics:', error.message);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// EXISTING ROUTES (unchanged)
+router.get('/settings/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('generation_settings')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+
+    if (error) return res.status(404).json({ success: false, error: 'Setting not found' });
+
+    res.json({ success: true, setting: data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/settings', async (req, res) => {
+  try {
+    const {
+      name, animeName, fandomWikiName, selectedPages,
+      maxApiCalls, questionsPerChunk, openaiModel,
+      promptInstructions, skipSections
+    } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({ success: false, error: 'Setting name is required' });
+    }
+    if (!animeName || !fandomWikiName) {
+      return res.status(400).json({ success: false, error: 'Anime name and fandom wiki name are required' });
+    }
+
+    const { data, error } = await supabase
+      .from('generation_settings')
+      .insert({
+        name: name.trim(),
+        anime_name: animeName.trim(),
+        fandom_wiki_name: fandomWikiName.trim(),
+        selected_pages: selectedPages || [],
+        max_api_calls: parseInt(maxApiCalls) || 10,
+        questions_per_chunk: parseInt(questionsPerChunk) || 4,
+        model: openaiModel || 'gpt-4o-mini',
+        prompt_instructions: promptInstructions || '',
+        skip_sections: skipSections || [],
+        usage_count: 0,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return res.status(400).json({ success: false, error: 'A setting with this name already exists' });
+      }
+      throw error;
+    }
+
+    res.json({ success: true, message: 'Setting saved', settingId: data.id, setting: data });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/settings/:id', async (req, res) => {
+  try {
+    const {
+      name, animeName, fandomWikiName, selectedPages,
+      maxApiCalls, questionsPerChunk, openaiModel,
+      promptInstructions, skipSections
+    } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({ success: false, error: 'Setting name is required' });
+    }
+    if (!animeName || !fandomWikiName) {
+      return res.status(400).json({ success: false, error: 'Anime name and fandom wiki name are required' });
+    }
+
+    const { error } = await supabase
+      .from('generation_settings')
+      .update({
+        name: name.trim(),
+        anime_name: animeName.trim(),
+        fandom_wiki_name: fandomWikiName.trim(),
+        selected_pages: selectedPages || [],
+        max_api_calls: parseInt(maxApiCalls) || 10,
+        questions_per_chunk: parseInt(questionsPerChunk) || 4,
+        model: openaiModel || 'gpt-4o-mini',
+        prompt_instructions: promptInstructions || '',
+        skip_sections: skipSections || [],
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.id);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Setting updated', settingId: req.params.id });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/settings/:id', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('generation_settings')
+      .delete()
+      .eq('id', req.params.id);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Setting deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/settings/:id/use', async (req, res) => {
+  try {
+    const { data: current, error: fetchError } = await supabase
+      .from('generation_settings')
+      .select('usage_count')
+      .eq('id', req.params.id)
+      .single();
+
+    if (fetchError) return res.status(404).json({ success: false, error: 'Setting not found' });
+
+    const { error } = await supabase
+      .from('generation_settings')
+      .update({
+        usage_count: (current.usage_count || 0) + 1,
+        last_used: new Date().toISOString(),
+      })
+      .eq('id', req.params.id);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Usage count updated' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Existing routes (unchanged)
 
 router.post('/start', async (req, res) => {
   const {
@@ -419,7 +216,7 @@ router.post('/start', async (req, res) => {
     questionsPerChunk,
     openaiModel,
     promptInstructions,
-    skipSections // Accept skip sections from UI
+    skipSections
   } = req.body;
 
   const processId = Date.now().toString();
@@ -442,12 +239,11 @@ router.post('/start', async (req, res) => {
       logs: [],
       openaiModel: openaiModel || 'gpt-4o-mini',
       promptInstructions: promptInstructions || 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.',
-      skipSections: skipSections || [] // Store skip sections in process
+      skipSections: skipSections || []
     };
 
     activeProcesses.set(processId, process);
 
-    // Start generation in the background
     generateQuestions(
       processId,
       animeName,
@@ -456,13 +252,13 @@ router.post('/start', async (req, res) => {
       individualPages || [],
       maxApiCalls || 10,
       questionsPerChunk || 4,
-      skipSections || [], // Pass skip sections to generation function
+      skipSections || [],
       io
     );
 
-    res.json({ 
-      processId, 
-      message: 'Generation started successfully' 
+    res.json({
+      processId,
+      message: 'Generation started successfully'
     });
 
   } catch (error) {
@@ -514,59 +310,55 @@ router.get('/anime/search/:term', async (req, res) => {
 router.get('/wiki/:wikiName/categories', async (req, res) => {
   try {
     const { search, limit, offset } = req.query;
-    
+
     let result;
     if (search && search.length >= 2) {
-      // Use search functionality
       result = await scrapingService.searchCategories(
-        req.params.wikiName, 
-        search, 
+        req.params.wikiName,
+        search,
         parseInt(limit) || 100
       );
     } else {
-      // Get all categories with pagination
       result = await scrapingService.getAvailableCategories(
-        req.params.wikiName, 
-        '', 
+        req.params.wikiName,
+        '',
         parseInt(limit) || 500,
         parseInt(offset) || 0
       );
     }
-    
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// New endpoint for searching categories specifically
 router.get('/wiki/:wikiName/categories/search', async (req, res) => {
   try {
     const { q, limit } = req.query;
-    
+
     if (!q || q.length < 2) {
       return res.json({ categories: [], hasMore: false });
     }
 
     const result = await scrapingService.searchCategories(
-      req.params.wikiName, 
-      q, 
+      req.params.wikiName,
+      q,
       parseInt(limit) || 50
     );
-    
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get popular pages from Special:MostRevisions
 router.get('/wiki/:wikiName/popular-pages', async (req, res) => {
   try {
     const { limit } = req.query;
     const result = await scrapingService.getPopularPages(
-      req.params.wikiName, 
-      parseInt(limit) || 100
+      req.params.wikiName,
+      parseInt(limit) || 500
     );
     res.json(result);
   } catch (error) {
@@ -575,7 +367,6 @@ router.get('/wiki/:wikiName/popular-pages', async (req, res) => {
   }
 });
 
-// New endpoint to get processing stats for a fandom
 router.get('/wiki/:wikiName/stats', async (req, res) => {
   try {
     const stats = await scrapingService.getProcessingStats(req.params.wikiName);
@@ -585,7 +376,7 @@ router.get('/wiki/:wikiName/stats', async (req, res) => {
   }
 });
 
-// Main Generation Logic - ENHANCED with skip sections
+// Main Generation Logic
 async function generateQuestions(
   processId,
   animeName,
@@ -593,8 +384,8 @@ async function generateQuestions(
   categories,
   individualPages,
   maxApiCalls,
-  questionsPerChunk, // This is now used as a multiplier/fallback
-  skipSections, // Skip sections parameter
+  questionsPerChunk,
+  skipSections,
   io
 ) {
   const process = activeProcesses.get(processId);
@@ -605,13 +396,11 @@ async function generateQuestions(
     emit('log', logEntry);
   };
 
-  // Create socket emitter for prompt data
   const socketEmitter = (event, data) => {
     emit(event, data);
   };
 
   try {
-    // Log skip sections configuration
     if (skipSections && skipSections.length > 0) {
       log(`Section filtering enabled: skipping ${skipSections.length} section types`, 'info');
       log(`Skip sections: ${skipSections.slice(0, 5).join(', ')}${skipSections.length > 5 ? '...' : ''}`, 'info');
@@ -623,18 +412,18 @@ async function generateQuestions(
     const animeData = await animeService.getAnimeId(animeName);
     if (!animeData) throw new Error(`Could not find AniList ID for ${animeName}`);
     process.animeId = animeData.id;
-    log(`Found anime: ${animeData.title.romaji} (ID: ${animeData.id})`, 'success');
+    log(`Found manga: ${animeData.title.romaji} (ID: ${animeData.id})`, 'success');
 
     const pagesToProcess = [];
     if (categories && categories.length > 0) {
-        for (const category of categories) {
-            log(`Fetching pages for category: ${category}...`);
-            const pages = await scrapingService.fetchRelevantPages(category, fandomWikiName);
-            pagesToProcess.push(...pages.map(p => ({ title: p, category })));
-        }
+      for (const category of categories) {
+        log(`Fetching pages for category: ${category}...`);
+        const pages = await scrapingService.fetchRelevantPages(category, fandomWikiName);
+        pagesToProcess.push(...pages.map(p => ({ title: p, category })));
+      }
     }
     if (individualPages && individualPages.length > 0) {
-        pagesToProcess.push(...individualPages.map(p => ({ title: p, category: 'Individual' })));
+      pagesToProcess.push(...individualPages.map(p => ({ title: p, category: 'Individual' })));
     }
 
     if (pagesToProcess.length === 0) {
@@ -651,12 +440,11 @@ async function generateQuestions(
       }
 
       log(`Processing page: ${page.title}`);
-      
-      // Pass skip sections to fetchPageContent
+
       const sections = await scrapingService.fetchPageContent(page.title, fandomWikiName, {
         skipSections: skipSections || []
       });
-      
+
       if (!sections || sections.length === 0) {
         log(`No content sections found for page: ${page.title} (possibly all sections were filtered out)`, 'warning');
         workDone++;
@@ -671,41 +459,38 @@ async function generateQuestions(
           process.status = 'stopping';
           break;
         }
-        
+
         const section = sections[sectionIndex];
         const sectionId = scrapingService.generateSectionId(page.category, page.title, section.title, fandomWikiName);
 
         log(`Processing section: "${section.title}" (${section.wordCount} words, ${section.questionCount} questions planned)`);
 
-        // Check if section was already processed
-        const isProcessed = await scrapingService.isSectionProcessed(sectionId, fandomWikiName);
-        
+        const isProcessed = await scrapingService.isSectionProcessed(sectionId);
+
         if (!isProcessed) {
           log(`Generating ${section.questionCount} questions for section: "${section.title}"`);
-          
-          // Generate questions using the calculated amount for this section
-          // Pass socket emitter for prompt monitoring
+
           const questions = await questionsService.generateQuestions(
-            section.content, 
-            section.questionCount, // Use calculated question count per section
-            animeName, 
-            page.category, 
+            section.content,
+            section.questionCount,
+            animeName,
+            page.category,
             page.title,
             {
               model: process.openaiModel,
               promptInstructions: process.promptInstructions,
-              sectionTitle: section.title, // Add section context
-              socketEmitter: socketEmitter // Pass socket emitter
+              sectionTitle: section.title,
+              socketEmitter: socketEmitter
             }
           );
 
           if (questions && questions.length > 0) {
-            const count = await questionsService.writeQuestionsToFirestore(
-              questions, 
-              process.animeId, 
-              { 
-                animeName, 
-                category: page.category, 
+            const count = await questionsService.writeQuestionsToSupabase(
+              questions,
+              process.animeId,
+              {
+                fandomWikiName,
+                category: page.category,
                 pageTitle: page.title,
                 sectionTitle: section.title,
                 model: process.openaiModel,
@@ -716,10 +501,9 @@ async function generateQuestions(
             log(`Generated ${count} questions for section "${section.title}".`, 'success');
             emit('questionsGenerated', { count, total: process.questionsGenerated });
           }
-          
+
           process.apiCallsMade++;
-          
-          // Mark section as processed
+
           await scrapingService.markSectionAsProcessed(sectionId, fandomWikiName, {
             category: page.category,
             pageTitle: page.title,
@@ -731,7 +515,7 @@ async function generateQuestions(
           log(`Skipping section "${section.title}" (already processed).`);
         }
       }
-      
+
       workDone++;
       process.progress = Math.round((workDone / totalWork) * 100);
       emit('progress', process.progress);
@@ -740,12 +524,11 @@ async function generateQuestions(
     process.status = 'completed';
     process.duration = Date.now() - new Date(process.startTime).getTime();
     log(`Generation completed! Generated a total of ${process.questionsGenerated} questions.`, 'success');
-    
-    // Log final filtering statistics
+
     if (skipSections && skipSections.length > 0) {
       log(`Section filtering was active during this generation (${skipSections.length} section types filtered).`, 'info');
     }
-    
+
     emit('completed', process);
 
   } catch (error) {

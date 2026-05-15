@@ -1,14 +1,14 @@
-// client/src/components/QuestionReview.js
 import React, { useState, useEffect } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
 export default function QuestionReview({ socket }) {
-  const [selectedAnime, setSelectedAnime] = useState('');
-  const [animeList, setAnimeList] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [selectedCategoryName, setSelectedCategoryName] = useState('');
   const [batchSize, setBatchSize] = useState(10);
-  const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
-  const [reviewPrompt, setReviewPrompt] = useState(`Rate these {count} anime quiz questions about "{animeName}" on a scale of 1-5:
+  const [selectedModel, setSelectedModel] = useState('gemini-flash-latest');
+  const [reviewPrompt, setReviewPrompt] = useState(`Rate these {count} manga quiz questions about "{animeName}" on a scale of 1-5:
 
 5 = Excellent (specific details, clear question, balanced options)
 4 = Good (clear question, mostly specific, good options)
@@ -23,265 +23,211 @@ Example: [4, 5, 3, 2, 4, 5, 1, 3, 4, 2]
 
 Your response:`);
   const [reviewStats, setReviewStats] = useState(null);
+  const [activeProcessId, setActiveProcessId] = useState(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [reviewProgress, setReviewProgress] = useState(null);
   const [reviewResults, setReviewResults] = useState(null);
   const [questionsToDelete, setQuestionsToDelete] = useState([]);
-  const [selectedQuestionIds, setSelectedQuestionIds] = useState(new Set()); // NEW: Track selected questions
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState(new Set());
   const [showDeletePreview, setShowDeletePreview] = useState(false);
+  const [selectedScoreFilters, setSelectedScoreFilters] = useState(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
-  const [loadingAnimes, setLoadingAnimes] = useState(false);
+  const [loadingCategories, setLoadingCategories] = useState(false);
   const [availableModels] = useState([
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'gemini' },
-    { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'gemini' },
+    { id: 'gemini-flash-latest', name: 'Gemini Flash', provider: 'gemini' },
+    { id: 'gemini-2.5-pro', name: 'Gemini Pro', provider: 'gemini' },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', provider: 'openai' },
-    { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai' }
+    { id: 'gpt-4.1', name: 'GPT-4.1', provider: 'openai' },
   ]);
 
-  // Fetch available animes on component mount
   useEffect(() => {
-    console.log('[QuestionReview] Component mounted, fetching animes...');
-    fetchAvailableAnimes();
+    fetchCategories();
   }, []);
 
-  // Fetch stats when anime is selected
   useEffect(() => {
-    if (selectedAnime) {
-      console.log('[QuestionReview] Selected anime changed:', selectedAnime);
-      fetchReviewStats(selectedAnime);
+    if (selectedCategoryId) {
+      fetchReviewStats(selectedCategoryId);
+    } else {
+      setReviewStats(null);
     }
-  }, [selectedAnime]);
+  }, [selectedCategoryId]);
 
-  // Socket event listeners for review progress
-  useEffect(() => {
-    if (!socket) {
-      console.log('[QuestionReview] No socket connection available');
-      return;
-    }
+  // Socket listeners are registered directly in startReview to avoid race conditions.
 
-    console.log('[QuestionReview] Setting up socket event listeners');
-
-    const handleReviewStarted = (data) => {
-      console.log('[Review] Started:', data);
-      setIsReviewing(true);
-      setReviewProgress({ currentBatch: 0, totalBatches: 0, totalProcessed: 0 });
-      setError('');
-    };
-
-    const handleReviewProgress = (data) => {
-      console.log('[Review] Progress:', data);
-      setReviewProgress(data);
-    };
-
-    const handleReviewCompleted = (data) => {
-      console.log('[Review] Completed:', data);
-      setIsReviewing(false);
-      setReviewProgress(null);
-      setReviewResults(data);
-      
-      // Refresh stats
-      if (selectedAnime) {
-        fetchReviewStats(selectedAnime);
-      }
-    };
-
-    const handleReviewError = (data) => {
-      console.error('[Review] Error:', data);
-      setIsReviewing(false);
-      setReviewProgress(null);
-      setError(data.error || 'Review process failed');
-    };
-
-    // Listen to all socket events to debug
-    socket.onAny((eventName, ...args) => {
-      if (eventName.includes('review:')) {
-        console.log('[Socket] Received event:', eventName, args);
-      }
-    });
-
-    // Listen to specific review events
-    socket.on('review:started', handleReviewStarted);
-    socket.on('review:progress', handleReviewProgress);  
-    socket.on('review:completed', handleReviewCompleted);
-    socket.on('review:error', handleReviewError);
-
-    return () => {
-      console.log('[QuestionReview] Cleaning up socket event listeners');
-      socket.off('review:started', handleReviewStarted);
-      socket.off('review:progress', handleReviewProgress);
-      socket.off('review:completed', handleReviewCompleted);
-      socket.off('review:error', handleReviewError);
-      if (socket.offAny) {
-        socket.offAny();
-      }
-    };
-  }, [socket, selectedAnime]);
-
-  const fetchAvailableAnimes = async () => {
-    setLoadingAnimes(true);
+  const fetchCategories = async () => {
+    setLoadingCategories(true);
     setError('');
-    
     try {
-      console.log('[QuestionReview] Fetching animes from:', `${API_URL}/api/review/animes`);
-      const response = await fetch(`${API_URL}/api/review/animes`);
+      const response = await fetch(`${API_URL}/api/review/categories`);
       const data = await response.json();
-      
-      console.log('[QuestionReview] Animes response:', data);
-      
-      if (data.success && data.animes) {
-        setAnimeList(data.animes);
-        console.log('[QuestionReview] Successfully loaded', data.animes.length, 'animes:', data.animes);
+      if (data.success) {
+        setCategories(data.categories || []);
       } else {
-        console.error('[QuestionReview] Failed to fetch animes:', data);
-        setError('Failed to fetch available animes: ' + (data.error || 'Unknown error'));
+        setError('Failed to fetch categories: ' + (data.error || 'Unknown error'));
       }
-    } catch (error) {
-      console.error('[QuestionReview] Error fetching animes:', error);
-      setError('Error fetching available animes: ' + error.message);
+    } catch (err) {
+      setError('Error fetching categories: ' + err.message);
     } finally {
-      setLoadingAnimes(false);
+      setLoadingCategories(false);
     }
   };
 
-  const fetchReviewStats = async (animeName) => {
+  const fetchReviewStats = async (categoryId) => {
     try {
-      const response = await fetch(`${API_URL}/api/review/stats/${encodeURIComponent(animeName)}`);
+      const response = await fetch(`${API_URL}/api/review/stats/${categoryId}`);
       const data = await response.json();
-      setReviewStats(data);
-    } catch (error) {
-      console.error('Error fetching review stats:', error);
+      if (data.error) {
+        setError('Error loading stats: ' + data.error);
+        setReviewStats(null);
+      } else {
+        setReviewStats(data);
+      }
+    } catch (err) {
       setError('Error fetching review statistics');
     }
   };
 
+  const handleCategoryChange = (e) => {
+    const id = e.target.value;
+    setSelectedCategoryId(id);
+    const cat = categories.find(c => String(c.id) === id);
+    setSelectedCategoryName(cat ? cat.name : '');
+    setReviewResults(null);
+    setShowDeletePreview(false);
+    setSelectedQuestionIds(new Set());
+    setSelectedScoreFilters(new Set());
+  };
+
   const startReview = async () => {
-    if (!selectedAnime) {
-      setError('Please select an anime first');
+    if (!selectedCategoryId) {
+      setError('Please select a category first');
       return;
     }
-
     setError('');
     setReviewResults(null);
-    
     try {
       const response = await fetch(`${API_URL}/api/review/review`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          animeName: selectedAnime,
-          batchSize: batchSize,
+          categoryId: selectedCategoryId,
+          batchSize,
           model: selectedModel,
-          customPrompt: reviewPrompt
+          customPrompt: reviewPrompt,
         }),
       });
-
       const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to start review');
-      }
+      if (!data.success) throw new Error(data.error || 'Failed to start review');
 
-      console.log('[Review] Started with process ID:', data.processId);
-      
-    } catch (error) {
-      console.error('Error starting review:', error);
-      setError(error.message);
+      const processId = data.processId;
+      const prefix = `review:${processId}:`;
+      console.log('[Review] Registering listeners for process:', processId);
+
+      // Register listeners immediately — before any React re-render — to avoid missing events
+      const onStarted = () => {
+        setIsReviewing(true);
+        setReviewProgress({ currentBatch: 0, totalBatches: 0, totalProcessed: 0 });
+        setError('');
+      };
+      const onProgress = (d) => setReviewProgress(d);
+      const onCompleted = (d) => {
+        setIsReviewing(false);
+        setReviewProgress(null);
+        setReviewResults(d);
+        socket.off(`${prefix}started`, onStarted);
+        socket.off(`${prefix}reviewProgress`, onProgress);
+        socket.off(`${prefix}error`, onError);
+        fetchReviewStats(selectedCategoryId);
+      };
+      const onError = (d) => {
+        setIsReviewing(false);
+        setReviewProgress(null);
+        setError(d.error || 'Review process failed');
+        socket.off(`${prefix}started`, onStarted);
+        socket.off(`${prefix}reviewProgress`, onProgress);
+        socket.off(`${prefix}completed`, onCompleted);
+      };
+
+      socket.on(`${prefix}started`, onStarted);
+      socket.on(`${prefix}reviewProgress`, onProgress);
+      socket.once(`${prefix}completed`, onCompleted);
+      socket.once(`${prefix}error`, onError);
+
+      setActiveProcessId(processId);
+    } catch (err) {
+      setError(err.message);
     }
   };
 
-  const previewQuestionsToDelete = async () => {
-    if (!selectedAnime) {
-      setError('Please select an anime first');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_URL}/api/review/questions/${encodeURIComponent(selectedAnime)}/score/1,2,3,4`);
-      const data = await response.json();
-      
-      if (data.success) {
-        setQuestionsToDelete(data.questions);
-        // NEW: Initially select all questions
-        setSelectedQuestionIds(new Set(data.questions.map(q => q.id)));
-        setShowDeletePreview(true);
-      } else {
-        setError('Failed to fetch questions for deletion preview');
-      }
-    } catch (error) {
-      console.error('Error fetching questions to delete:', error);
-      setError('Error fetching questions for deletion');
-    }
-  };
-
-  // NEW: Toggle individual question selection
-  const toggleQuestionSelection = (questionId) => {
-    setSelectedQuestionIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(questionId)) {
-        newSet.delete(questionId);
-      } else {
-        newSet.add(questionId);
-      }
-      return newSet;
+  const toggleScoreFilter = (score) => {
+    setSelectedScoreFilters(prev => {
+      const next = new Set(prev);
+      if (next.has(score)) next.delete(score);
+      else next.add(score);
+      return next;
     });
   };
 
-  // NEW: Select all questions
-  const selectAllQuestions = () => {
-    setSelectedQuestionIds(new Set(questionsToDelete.map(q => q.id)));
+  const previewFilteredQuestions = async () => {
+    if (!selectedCategoryId) {
+      setError('Please select a category first');
+      return;
+    }
+    if (selectedScoreFilters.size === 0) {
+      setError('Please select at least one score to filter on');
+      return;
+    }
+    try {
+      const scores = Array.from(selectedScoreFilters).sort().join(',');
+      const response = await fetch(`${API_URL}/api/review/questions/${selectedCategoryId}/score/${scores}`);
+      const data = await response.json();
+      if (data.success) {
+        setQuestionsToDelete(data.questions);
+        setSelectedQuestionIds(new Set(data.questions.map(q => q.id)));
+        setShowDeletePreview(true);
+      } else {
+        setError('Failed to fetch questions');
+      }
+    } catch (err) {
+      setError('Error fetching questions');
+    }
   };
 
-  // NEW: Deselect all questions
-  const deselectAllQuestions = () => {
-    setSelectedQuestionIds(new Set());
+  const toggleQuestionSelection = (questionId) => {
+    setSelectedQuestionIds(prev => {
+      const next = new Set(prev);
+      if (next.has(questionId)) next.delete(questionId);
+      else next.add(questionId);
+      return next;
+    });
   };
 
-  // MODIFIED: Execute delete only for selected questions
   const executeDelete = async () => {
     if (selectedQuestionIds.size === 0) {
       setError('No questions selected for deletion');
       return;
     }
-
-    // Show confirmation dialog
-    if (!window.confirm(`Are you sure you want to delete ${selectedQuestionIds.size} selected questions? This action cannot be undone.`)) {
-      return;
-    }
+    if (!window.confirm(`Delete ${selectedQuestionIds.size} selected questions? This cannot be undone.`)) return;
 
     setIsDeleting(true);
     setError('');
-
     try {
-      const questionIds = Array.from(selectedQuestionIds);
-      
       const response = await fetch(`${API_URL}/api/review/questions/bulk`, {
         method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ questionIds }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questionIds: Array.from(selectedQuestionIds) }),
       });
-
       const data = await response.json();
-      
       if (data.success) {
-        console.log(`[Delete] Successfully deleted ${data.deletedCount} questions`);
         setQuestionsToDelete([]);
         setSelectedQuestionIds(new Set());
         setShowDeletePreview(false);
-        
-        // Refresh stats
-        if (selectedAnime) {
-          fetchReviewStats(selectedAnime);
-        }
+        if (selectedCategoryId) fetchReviewStats(selectedCategoryId);
       } else {
         setError(data.error || 'Failed to delete questions');
       }
-    } catch (error) {
-      console.error('Error deleting questions:', error);
+    } catch (err) {
       setError('Error deleting questions');
     } finally {
       setIsDeleting(false);
@@ -289,27 +235,19 @@ Your response:`);
   };
 
   const getScoreColor = (score) => {
-    switch (score) {
-      case 5: return 'bg-green-100 text-green-800';
-      case 4: return 'bg-blue-100 text-blue-800';
-      case 3: return 'bg-yellow-100 text-yellow-800';
-      case 2: return 'bg-orange-100 text-orange-800';
-      case 1: return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
+    const colors = { 5: 'bg-green-100 text-green-800', 4: 'bg-blue-100 text-blue-800', 3: 'bg-yellow-100 text-yellow-800', 2: 'bg-orange-100 text-orange-800', 1: 'bg-red-100 text-red-800' };
+    return colors[score] || 'bg-gray-100 text-gray-800';
   };
+
+  const scoreDistribution = reviewStats?.scoreDistribution || {};
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header */}
       <div className="bg-white shadow rounded-lg p-6">
-        <h2 className="text-2xl font-bold text-gray-900 mb-4">Question Review</h2>
-        <p className="text-gray-600">
-          Use AI to review and score questions. Questions with scores ≤ 2 can be deleted to improve overall quality.
-        </p>
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Question Review</h2>
+        <p className="text-gray-600">Use AI to score questions. Low-scoring questions can be deleted to improve quality.</p>
       </div>
 
-      {/* Error Display */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-md p-4">
           <p className="text-sm text-red-600">{error}</p>
@@ -319,53 +257,28 @@ Your response:`);
       {/* Configuration */}
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Review Configuration</h3>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Anime Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Select Anime</label>
-            <div className="relative">
-              <select
-                value={selectedAnime}
-                onChange={(e) => {
-                  console.log('[QuestionReview] Anime selected:', e.target.value);
-                  setSelectedAnime(e.target.value);
-                }}
-                disabled={loadingAnimes}
-                className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 disabled:text-gray-500"
-              >
-                <option value="">
-                  {loadingAnimes ? 'Loading animes...' : 'Choose anime...'}
-                </option>
-                {animeList.map((anime) => (
-                  <option key={anime} value={anime}>
-                    {anime}
-                  </option>
-                ))}
-              </select>
-              {loadingAnimes && (
-                <div className="absolute right-2 top-2 pointer-events-none">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
-                </div>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-gray-500">
-              {animeList.length > 0 
-                ? `${animeList.length} animes available` 
-                : loadingAnimes 
-                  ? 'Loading...' 
-                  : 'No animes found'
-              }
-            </p>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Select Manga</label>
+            <select
+              value={selectedCategoryId}
+              onChange={handleCategoryChange}
+              disabled={loadingCategories}
+              className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100"
+            >
+              <option value="">{loadingCategories ? 'Loading...' : 'Choose manga...'}</option>
+              {categories.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">{categories.length} categories available</p>
           </div>
 
-          {/* Batch Size */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Batch Size</label>
             <input
-              type="number"
-              min="1"
-              max="50"
+              type="number" min="1" max="50"
               value={batchSize}
               onChange={(e) => setBatchSize(parseInt(e.target.value) || 1)}
               className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
@@ -373,7 +286,6 @@ Your response:`);
             <p className="mt-1 text-xs text-gray-500">Questions per AI call (1-50)</p>
           </div>
 
-          {/* AI Model Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">AI Model</label>
             <select
@@ -381,23 +293,20 @@ Your response:`);
               onChange={(e) => setSelectedModel(e.target.value)}
               className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
             >
-              {availableModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name} ({model.provider})
-                </option>
+              {availableModels.map(m => (
+                <option key={m.id} value={m.id}>{m.name} ({m.provider})</option>
               ))}
             </select>
           </div>
 
-          {/* Start Review Button */}
           <div className="flex items-end">
             <button
               onClick={startReview}
-              disabled={!selectedAnime || isReviewing}
+              disabled={!selectedCategoryId || isReviewing}
               className={`w-full px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                !selectedAnime || isReviewing
+                !selectedCategoryId || isReviewing
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  : 'bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
               }`}
             >
               {isReviewing ? 'Reviewing...' : 'Start Review'}
@@ -405,13 +314,12 @@ Your response:`);
           </div>
         </div>
 
-        {/* Custom Review Prompt Section */}
         <div className="mt-6 pt-6 border-t border-gray-200">
-          <h4 className="text-md font-medium text-gray-900 mb-3">🤖 Custom Review Prompt</h4>
+          <h4 className="text-md font-medium text-gray-900 mb-3">Custom Review Prompt</h4>
           <p className="text-sm text-gray-600 mb-3">
-            Customize how the AI reviews questions. Use placeholders: 
-            <code className="text-xs bg-gray-100 px-1 rounded">{'{count}'}</code>, 
-            <code className="text-xs bg-gray-100 px-1 rounded">{'{animeName}'}</code>, 
+            Placeholders:{' '}
+            <code className="text-xs bg-gray-100 px-1 rounded">{'{count}'}</code>{' '}
+            <code className="text-xs bg-gray-100 px-1 rounded">{'{animeName}'}</code>{' '}
             <code className="text-xs bg-gray-100 px-1 rounded">{'{questions}'}</code>
           </p>
           <textarea
@@ -419,42 +327,33 @@ Your response:`);
             onChange={(e) => setReviewPrompt(e.target.value)}
             rows={8}
             className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm font-mono text-sm"
-            placeholder="Enter your custom review prompt here..."
           />
-          <p className="mt-2 text-xs text-gray-500">
-            The AI must return a JSON array of scores (1-5) matching the number of questions being reviewed.
-          </p>
+          <p className="mt-2 text-xs text-gray-500">The AI must return a JSON array of scores (1-5) matching the question count.</p>
         </div>
       </div>
 
       {/* Review Statistics */}
       {reviewStats && (
         <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Review Statistics - {selectedAnime}</h3>
-          
+          <h3 className="text-lg font-medium text-gray-900 mb-4">
+            Statistics — {selectedCategoryName}
+          </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-            {/* Total Questions */}
             <div className="bg-gray-50 p-4 rounded-lg text-center">
               <div className="text-2xl font-bold text-gray-900">{reviewStats.total}</div>
               <div className="text-sm text-gray-500">Total</div>
             </div>
-
-            {/* Reviewed */}
             <div className="bg-green-50 p-4 rounded-lg text-center">
               <div className="text-2xl font-bold text-green-600">{reviewStats.reviewed}</div>
               <div className="text-sm text-gray-500">Reviewed</div>
             </div>
-
-            {/* Score Distribution */}
-            {[5, 4, 3, 2, 1].map((score) => (
+            {[5, 4, 3, 2, 1].map(score => (
               <div key={score} className={`p-4 rounded-lg text-center ${getScoreColor(score)}`}>
-                <div className="text-2xl font-bold">{reviewStats.scoreDistribution[score]}</div>
+                <div className="text-2xl font-bold">{scoreDistribution[score] ?? 0}</div>
                 <div className="text-sm">Score {score}</div>
               </div>
             ))}
           </div>
-
-          {/* Progress Bar and Average */}
           <div className="mt-4">
             <div className="flex justify-between items-center mb-2">
               <span className="text-sm text-gray-600">Review Progress</span>
@@ -465,15 +364,13 @@ Your response:`);
             <div className="w-full bg-gray-200 rounded-full h-2">
               <div
                 className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ 
-                  width: `${reviewStats.total > 0 ? (reviewStats.reviewed / reviewStats.total) * 100 : 0}%` 
-                }}
+                style={{ width: `${reviewStats.total > 0 ? (reviewStats.reviewed / reviewStats.total) * 100 : 0}%` }}
               />
             </div>
             {reviewStats.averageScore > 0 && (
               <div className="mt-2 text-center">
                 <span className="text-sm text-gray-600">Average Score: </span>
-                <span className="font-semibold text-gray-900">{reviewStats.averageScore}/5</span>
+                <span className="font-semibold">{reviewStats.averageScore}/5</span>
               </div>
             )}
           </div>
@@ -483,30 +380,20 @@ Your response:`);
       {/* Review Progress */}
       {reviewProgress && (
         <div className="bg-white shadow rounded-lg p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4">Review Progress</h3>
-          
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Review in Progress</h3>
           <div className="mb-4">
             <div className="flex justify-between items-center mb-2">
-              <span className="text-sm text-gray-600">
-                Batch {reviewProgress.currentBatch} of {reviewProgress.totalBatches}
-              </span>
-              <span className="text-sm text-gray-600">
-                {reviewProgress.totalProcessed} questions processed
-              </span>
+              <span className="text-sm text-gray-600">Batch {reviewProgress.currentBatch} of {reviewProgress.totalBatches}</span>
+              <span className="text-sm text-gray-600">{reviewProgress.totalProcessed} questions processed</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-3">
               <div
                 className="bg-blue-600 h-3 rounded-full transition-all duration-300"
-                style={{ 
-                  width: `${reviewProgress.totalBatches > 0 ? (reviewProgress.currentBatch / reviewProgress.totalBatches) * 100 : 0}%` 
-                }}
+                style={{ width: `${reviewProgress.totalBatches > 0 ? (reviewProgress.currentBatch / reviewProgress.totalBatches) * 100 : 0}%` }}
               />
             </div>
           </div>
-          
-          <div className="text-sm text-gray-600">
-            Currently processing {reviewProgress.questionsInBatch} questions in this batch...
-          </div>
+          <p className="text-sm text-gray-600">Processing {reviewProgress.questionsInBatch} questions in this batch...</p>
         </div>
       )}
 
@@ -514,177 +401,147 @@ Your response:`);
       {reviewResults && (
         <div className="bg-white shadow rounded-lg p-6">
           <h3 className="text-lg font-medium text-gray-900 mb-4">Review Results</h3>
-          
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-4">
             <div className="bg-gray-50 p-4 rounded-lg text-center">
-              <div className="text-2xl font-bold text-gray-900">{reviewResults.totalProcessed}</div>
+              <div className="text-2xl font-bold">{reviewResults.totalProcessed}</div>
               <div className="text-sm text-gray-500">Processed</div>
             </div>
-            
-            {[5, 4, 3, 2, 1].map((score) => (
+            {[5, 4, 3, 2, 1].map(score => (
               <div key={score} className={`p-4 rounded-lg text-center ${getScoreColor(score)}`}>
-                <div className="text-2xl font-bold">{reviewResults.scoreDistribution[score]}</div>
+                <div className="text-2xl font-bold">{(reviewResults.scoreDistribution || {})[score] ?? 0}</div>
                 <div className="text-sm">Score {score}</div>
               </div>
             ))}
           </div>
-          
           <div className="text-center">
             <span className="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800">
-              ✅ Review completed successfully
+              Review completed successfully
             </span>
           </div>
         </div>
       )}
 
-      {/* Delete Preview and Controls */}
+      {/* Question Management */}
       <div className="bg-white shadow rounded-lg p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-medium text-gray-900">Question Management</h3>
+        <h3 className="text-lg font-medium text-gray-900 mb-4">Question Management</h3>
+        <p className="text-sm text-gray-600 mb-3">Filter questions by score to preview and manage them.</p>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          {[1, 2, 3, 4, 5].map(score => (
+            <button
+              key={score}
+              onClick={() => toggleScoreFilter(score)}
+              className={`px-4 py-2 rounded-md text-sm font-medium border transition-colors ${
+                selectedScoreFilters.has(score)
+                  ? score <= 2
+                    ? 'bg-red-600 text-white border-red-600'
+                    : score === 3
+                    ? 'bg-yellow-500 text-white border-yellow-500'
+                    : 'bg-green-600 text-white border-green-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Score {score}
+            </button>
+          ))}
           <button
-            onClick={previewQuestionsToDelete}
-            disabled={!selectedAnime}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              !selectedAnime
+            onClick={previewFilteredQuestions}
+            disabled={!selectedCategoryId || selectedScoreFilters.size === 0}
+            className={`ml-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              !selectedCategoryId || selectedScoreFilters.size === 0
                 ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-orange-600 text-white hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500'
+                : 'bg-orange-600 text-white hover:bg-orange-700'
             }`}
           >
-            Preview Questions to Delete
+            Preview ({selectedScoreFilters.size} selected)
           </button>
         </div>
-
-        <p className="text-sm text-gray-600 mb-4">
-          Questions with scores ≤ 2 are considered low quality and can be deleted to improve your question database.
-        </p>
 
         {showDeletePreview && (
           <div className="space-y-4">
             {questionsToDelete.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
-                <p>No questions found with scores ≤ 2</p>
-                <p className="text-sm">All questions meet the quality threshold!</p>
+                <p>No questions found with the selected score{selectedScoreFilters.size !== 1 ? 's' : ''}</p>
               </div>
             ) : (
               <>
-                {/* ENHANCED: Selection summary and controls */}
-                <div className="bg-red-50 border border-red-200 rounded-md p-4 mb-4">
+                <div className="bg-red-50 border border-red-200 rounded-md p-4">
                   <div className="flex justify-between items-center mb-2">
                     <h4 className="font-medium text-red-800">
-                      {selectedQuestionIds.size} of {questionsToDelete.length} questions selected for deletion
+                      {selectedQuestionIds.size} of {questionsToDelete.length} selected for deletion
                     </h4>
                     <div className="flex space-x-2">
-                      <button
-                        onClick={selectAllQuestions}
-                        className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200 transition-colors"
-                      >
+                      <button onClick={() => setSelectedQuestionIds(new Set(questionsToDelete.map(q => q.id)))}
+                        className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200">
                         Select All
                       </button>
-                      <button
-                        onClick={deselectAllQuestions}
-                        className="px-3 py-1 text-sm bg-white text-red-700 border border-red-300 rounded hover:bg-red-50 transition-colors"
-                      >
+                      <button onClick={() => setSelectedQuestionIds(new Set())}
+                        className="px-3 py-1 text-sm bg-white text-red-700 border border-red-300 rounded hover:bg-red-50">
                         Deselect All
                       </button>
                     </div>
                   </div>
-                  <p className="text-sm text-red-600 mt-1">
-                    This action cannot be undone. Review the questions below and select which ones to delete.
-                  </p>
+                  <p className="text-sm text-red-600">This action cannot be undone.</p>
                 </div>
 
-                {/* ENHANCED: Questions list with checkboxes */}
-                <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-md">
-                  <div className="divide-y divide-gray-200">
-                    {questionsToDelete.map((question) => (
-                      <div 
-                        key={question.id} 
-                        className={`p-4 transition-colors ${
-                          selectedQuestionIds.has(question.id) 
-                            ? 'bg-red-50 border-l-4 border-red-400' 
-                            : 'hover:bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex items-start space-x-3">
-                          {/* Checkbox */}
-                          <input
-                            type="checkbox"
-                            checked={selectedQuestionIds.has(question.id)}
-                            onChange={() => toggleQuestionSelection(question.id)}
-                            className="mt-1 h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded"
-                          />
-                          
-                          {/* Question content */}
-                          <div className="flex-1">
-                            <div className="flex justify-between items-start mb-2">
-                              <h5 className="font-medium text-gray-900">{question.question}</h5>
-                              <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(question.reviewScore)}`}>
-                                {question.reviewScore}/5
-                              </span>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-2 text-sm">
-                              {question.options.map((option, index) => (
-                                <div
-                                  key={index}
-                                  className={`p-2 rounded ${
-                                    index === question.correctAnswer
-                                      ? 'bg-green-50 border border-green-200 text-green-800'
-                                      : 'bg-gray-50 text-gray-700'
-                                  }`}
-                                >
-                                  {String.fromCharCode(65 + index)}. {option}
-                                  {index === question.correctAnswer && ' ✓'}
-                                </div>
-                              ))}
-                            </div>
-                            
-                            <div className="mt-2 flex items-center space-x-4 text-xs text-gray-500">
-                              <span>Category: {question.category || 'None'}</span>
-                              <span>Page: {question.pageTitle || 'Unknown'}</span>
-                            </div>
+                <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-200">
+                  {questionsToDelete.map(question => (
+                    <div
+                      key={question.id}
+                      className={`p-4 transition-colors ${selectedQuestionIds.has(question.id) ? 'bg-red-50 border-l-4 border-red-400' : 'hover:bg-gray-50'}`}
+                    >
+                      <div className="flex items-start space-x-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedQuestionIds.has(question.id)}
+                          onChange={() => toggleQuestionSelection(question.id)}
+                          className="mt-1 h-4 w-4 text-red-600 border-gray-300 rounded"
+                        />
+                        <div className="flex-1">
+                          <div className="flex justify-between items-start mb-2">
+                            <h5 className="font-medium text-gray-900">{question.question_text}</h5>
+                            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(question.review_score)}`}>
+                              {question.review_score}/5
+                            </span>
                           </div>
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            {(question.options || []).map((option, index) => (
+                              <div
+                                key={index}
+                                className={`p-2 rounded ${index === question.correct_answer ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-gray-50 text-gray-700'}`}
+                              >
+                                {String.fromCharCode(65 + index)}. {option}
+                                {index === question.correct_answer && ' ✓'}
+                              </div>
+                            ))}
+                          </div>
+                          {question.source_url && (
+                            <div className="mt-2 text-xs text-gray-500">
+                              <a href={question.source_url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Source</a>
+                            </div>
+                          )}
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
 
-                {/* ENHANCED: Action buttons with selection count */}
                 <div className="flex justify-between items-center pt-4 border-t">
-                  <div className="text-sm text-gray-600">
-                    {selectedQuestionIds.size === 0 
-                      ? 'No questions selected' 
-                      : `${selectedQuestionIds.size} question${selectedQuestionIds.size !== 1 ? 's' : ''} will be deleted`
-                    }
-                  </div>
+                  <span className="text-sm text-gray-600">
+                    {selectedQuestionIds.size === 0 ? 'No questions selected' : `${selectedQuestionIds.size} question${selectedQuestionIds.size !== 1 ? 's' : ''} will be deleted`}
+                  </span>
                   <div className="flex space-x-3">
                     <button
-                      onClick={() => {
-                        setShowDeletePreview(false);
-                        setSelectedQuestionIds(new Set());
-                      }}
-                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                      onClick={() => { setShowDeletePreview(false); setSelectedQuestionIds(new Set()); }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={executeDelete}
                       disabled={isDeleting || selectedQuestionIds.size === 0}
-                      className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-                        isDeleting || selectedQuestionIds.size === 0
-                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                          : 'bg-red-600 text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500'
-                      }`}
+                      className={`px-4 py-2 text-sm font-medium rounded-md ${isDeleting || selectedQuestionIds.size === 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
                     >
-                      {isDeleting ? (
-                        <div className="flex items-center">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          Deleting...
-                        </div>
-                      ) : (
-                        `Delete ${selectedQuestionIds.size} Selected Question${selectedQuestionIds.size !== 1 ? 's' : ''}`
-                      )}
+                      {isDeleting ? 'Deleting...' : `Delete ${selectedQuestionIds.size} Question${selectedQuestionIds.size !== 1 ? 's' : ''}`}
                     </button>
                   </div>
                 </div>
@@ -698,30 +555,18 @@ Your response:`);
       <div className="bg-white shadow rounded-lg p-6">
         <h3 className="text-lg font-medium text-gray-900 mb-4">Scoring Rubric</h3>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
-          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-            <div className="font-medium text-green-800 mb-2">5/5 - Excellent</div>
-            <div className="text-green-700">Specific details, clear question, balanced options, tests knowledge</div>
-          </div>
-          
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-            <div className="font-medium text-blue-800 mb-2">4/5 - Good</div>
-            <div className="text-blue-700">Clear question, mostly specific, good options</div>
-          </div>
-          
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-            <div className="font-medium text-yellow-800 mb-2">3/5 - Acceptable</div>
-            <div className="text-yellow-700">Basic question, adequate options, could be improved</div>
-          </div>
-          
-          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-            <div className="font-medium text-orange-800 mb-2">2/5 - Poor</div>
-            <div className="text-orange-700">Vague question, obvious wrong answers, or confusing</div>
-          </div>
-          
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <div className="font-medium text-red-800 mb-2">1/5 - Terrible</div>
-            <div className="text-red-700">Broken question, impossible to answer, or completely wrong</div>
-          </div>
+          {[
+            { score: 5, label: 'Excellent', color: 'bg-green-50 border-green-200 text-green-700', head: 'text-green-800', desc: 'Specific details, clear question, balanced options' },
+            { score: 4, label: 'Good', color: 'bg-blue-50 border-blue-200 text-blue-700', head: 'text-blue-800', desc: 'Clear question, mostly specific, good options' },
+            { score: 3, label: 'Acceptable', color: 'bg-yellow-50 border-yellow-200 text-yellow-700', head: 'text-yellow-800', desc: 'Basic question, adequate options, could be improved' },
+            { score: 2, label: 'Poor', color: 'bg-orange-50 border-orange-200 text-orange-700', head: 'text-orange-800', desc: 'Vague question, obvious wrong answers' },
+            { score: 1, label: 'Terrible', color: 'bg-red-50 border-red-200 text-red-700', head: 'text-red-800', desc: 'Broken question, impossible to answer' },
+          ].map(({ score, label, color, head, desc }) => (
+            <div key={score} className={`border rounded-lg p-3 ${color}`}>
+              <div className={`font-medium mb-2 ${head}`}>{score}/5 — {label}</div>
+              <div>{desc}</div>
+            </div>
+          ))}
         </div>
       </div>
     </div>

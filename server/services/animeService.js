@@ -9,7 +9,7 @@ class AnimeService {
   async getAnimeId(animeTitle) {
     const query = `
       query ($search: String) {
-        Media(search: $search, type: ANIME) {
+        Media(search: $search, type: MANGA) {
           id
           title {
             romaji
@@ -50,7 +50,7 @@ class AnimeService {
     const query = `
       query ($search: String) {
         Page(page: 1, perPage: 10) {
-          media(search: $search, type: ANIME) {
+          media(search: $search, type: MANGA) {
             id
             title {
               romaji

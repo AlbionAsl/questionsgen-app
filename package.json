@@ -16,9 +16,11 @@
   },
   "dependencies": {
     "@google/genai": "^1.10.0",
+    "@supabase/supabase-js": "^2.105.4",
     "axios": "^1.7.2",
     "body-parser": "^1.20.2",
     "cheerio": "^1.0.0-rc.12",
+    "chmod": "^0.2.1",
     "concurrently": "^8.2.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

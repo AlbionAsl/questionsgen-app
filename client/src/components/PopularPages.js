@@ -104,7 +104,7 @@ export default function PopularPages({ onStart }) {
       category: 'Google Gemini Models'
     },
     { 
-      id: 'gemini-2.5-flash', 
+      id: 'gemini-flash-latest', 
       name: 'Gemini 2.5 Flash', 
       description: 'Fast and efficient Google model, good for most use cases', 
       provider: 'gemini',

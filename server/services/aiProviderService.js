@@ -377,7 +377,7 @@ class AIProviderService {
       case 'speed':
         // Prioritize speed
         return models.find(m => m.id === 'gpt-4o-mini') || 
-               models.find(m => m.id === 'gemini-2.5-flash') ||
+               models.find(m => m.id === 'gemini-flash-latest') ||
                models[0];
                
       case 'quality':
@@ -389,7 +389,7 @@ class AIProviderService {
       case 'cost':
         // Prioritize cost-effectiveness
         return models.find(m => m.id === 'gpt-4o-mini') || 
-               models.find(m => m.id === 'gemini-2.5-flash') ||
+               models.find(m => m.id === 'gemini-flash-latest') ||
                models[0];
                
       default:
