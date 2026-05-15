@@ -10,7 +10,7 @@ import QuestionReview from './components/QuestionReview'; // NEW: Import Questio
 const API_URL = process.env.REACT_APP_API_URL || '';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('generate');
+  const [activeTab, setActiveTab] = useState('popular');
   const [socket, setSocket] = useState(null);
   const [activeProcess, setActiveProcess] = useState(null);
   const [stats, setStats] = useState(null);

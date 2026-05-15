@@ -160,7 +160,7 @@ Your response:`;
           { role: 'user', content: prompt },
         ],
         temperature: 0.3,
-        max_tokens: 100,
+        max_tokens: 10000,
       });
 
       return this.parseScoreArray(response.choices[0].message.content, expectedCount);

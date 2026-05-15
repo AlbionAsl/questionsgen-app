@@ -241,7 +241,7 @@ class AIProviderService {
       ],
       functions: functions,
       function_call: { name: 'generate_questions' },
-      max_tokens: 1000,
+      max_tokens: 10000,
       temperature: options.temperature || 0.7,
     });
 
