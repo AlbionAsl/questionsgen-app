@@ -5,7 +5,8 @@ import ProgressMonitor from './components/ProgressMonitor';
 import QuestionsList from './components/QuestionsList';
 import History from './components/History';
 import PopularPages from './components/PopularPages';
-import QuestionReview from './components/QuestionReview'; // NEW: Import QuestionReview
+import QuestionReview from './components/QuestionReview';
+import Settings from './components/Settings';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -80,8 +81,9 @@ export default function App() {
               { id: 'popular', label: 'Popular Pages', icon: '⭐' },
               { id: 'progress', label: 'Progress Monitor', icon: '📊' },
               { id: 'questions', label: 'View Questions', icon: '❓' },
-              { id: 'review', label: 'Question Review', icon: '👻' }, // NEW: Question Review tab
-              { id: 'history', label: 'Generation History', icon: '📜' }
+              { id: 'review', label: 'Question Review', icon: '👻' },
+              { id: 'history', label: 'Generation History', icon: '📜' },
+              { id: 'settings', label: 'Settings', icon: '⚙️' }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -128,6 +130,9 @@ export default function App() {
             setActiveProcess(id);
             setActiveTab('progress');
           }} />
+        )}
+        {activeTab === 'settings' && (
+          <Settings />
         )}
       </main>
     </div>

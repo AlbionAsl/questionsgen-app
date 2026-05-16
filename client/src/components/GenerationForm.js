@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -10,7 +10,7 @@ export default function GenerationForm({ onStart }) {
     individualPages: [],
     maxApiCalls: 10,
     questionsPerChunk: 4,
-    openaiModel: 'gpt-4o-mini',
+    openaiModel: '',
     promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
   });
 
@@ -29,51 +29,6 @@ export default function GenerationForm({ onStart }) {
   const [availableModels, setAvailableModels] = useState([]);
   const [aiProviderStats, setAiProviderStats] = useState(null);
 
-  // FIX: Move defaultModels inside useMemo to prevent dependency issues
-  const defaultModels = useMemo(() => [
-    { 
-      id: 'gpt-4o-mini', 
-      name: 'GPT-4o Mini', 
-      description: 'Fast & Cost-effective (Best for most use cases)', 
-      provider: 'openai',
-      category: 'OpenAI Models'
-    },
-    { 
-      id: 'gpt-4.1', 
-      name: 'GPT-4.1', 
-      description: 'Higher quality, slower', 
-      provider: 'openai',
-      category: 'OpenAI Models'
-    },
-    { 
-      id: 'gpt-4.1-mini', 
-      name: 'GPT-4.1 Mini', 
-      description: 'Faster 4.1', 
-      provider: 'openai',
-      category: 'OpenAI Models'
-    },
-    { 
-      id: 'o4-mini', 
-      name: 'o4-mini', 
-      description: 'Reasoning monster', 
-      provider: 'openai',
-      category: 'OpenAI Models'
-    },
-    { 
-      id: 'gemini-2.5-pro', 
-      name: 'Gemini 2.5 Pro', 
-      description: 'Most capable Google model, higher quality but slower', 
-      provider: 'gemini',
-      category: 'Google Gemini Models'
-    },
-    { 
-      id: 'gemini-flash-latest', 
-      name: 'Gemini 2.5 Flash', 
-      description: 'Fast and efficient Google model, good for most use cases', 
-      provider: 'gemini',
-      category: 'Google Gemini Models'
-    }
-  ], []);
 
   // Common anime presets
   const animePresets = [
@@ -109,21 +64,18 @@ export default function GenerationForm({ onStart }) {
     }
   ];
 
-  // FIX: Add defaultModels to dependency array
   const fetchAvailableModels = useCallback(async () => {
     try {
       const response = await fetch(`${API_URL}/api/ai/models`);
       const data = await response.json();
-      if (data.success) {
-        setAvailableModels(data.models || defaultModels);
-      } else {
-        setAvailableModels(defaultModels);
+      if (data.success && data.models && data.models.length > 0) {
+        setAvailableModels(data.models);
+        setFormData(prev => ({ ...prev, openaiModel: data.models[0].id }));
       }
     } catch (error) {
       console.error('Error fetching available models:', error);
-      setAvailableModels(defaultModels);
     }
-  }, [defaultModels]);
+  }, []);
 
   const fetchAIProviderStats = useCallback(async () => {
     try {

@@ -1,6 +1,7 @@
 // server/services/aiProviderService.js
 const openaiService = require('./openaiService');
 const geminiService = require('./geminiService');
+const modelConfigService = require('./modelConfigService');
 
 class AIProviderService {
   constructor() {
@@ -10,61 +11,29 @@ class AIProviderService {
     };
   }
 
-  // Get all available models from all providers
-  getAllAvailableModels() {
-    const openaiModels = [
-      {
-        id: 'gpt-4o-mini',
-        name: 'GPT-4o Mini',
-        description: 'Fast & Cost-effective (Best for most use cases)',
-        provider: 'openai',
-        supportsStructuredOutput: false,
-        supportsFunctionCalling: true,
-      },
-      {
-        id: 'gpt-4.1',
-        name: 'GPT-4.1',
-        description: 'Higher quality, slower',
-        provider: 'openai',
-        supportsStructuredOutput: false,
-        supportsFunctionCalling: true,
-      },
-      {
-        id: 'gpt-4.1-mini',
-        name: 'GPT-4.1 Mini',
-        description: 'Faster 4.1',
-        provider: 'openai',
-        supportsStructuredOutput: false,
-        supportsFunctionCalling: true,
-      },
-      {
-        id: 'o4-mini',
-        name: 'o4-mini',
-        description: 'Reasoning monster',
-        provider: 'openai',
-        supportsStructuredOutput: false,
-        supportsFunctionCalling: true,
-      }
-    ];
+  async getAllAvailableModels() {
+    const models = await modelConfigService.getModels();
 
-    const geminiModels = geminiService.getAvailableModels();
+    const formatted = models.map(m => ({
+      id: m.api_model_id,
+      name: m.display_name,
+      provider: m.provider,
+    }));
 
-    return {
-      openai: openaiModels,
-      gemini: geminiModels,
-      all: [...openaiModels, ...geminiModels]
-    };
+    const openai = formatted.filter(m => m.provider === 'openai');
+    const gemini = formatted.filter(m => m.provider === 'gemini');
+
+    return { openai, gemini, all: formatted };
   }
 
-  // Get provider and model info from model ID
-  getProviderInfo(modelId) {
-    const allModels = this.getAllAvailableModels().all;
-    const modelInfo = allModels.find(model => model.id === modelId);
-    
+  async getProviderInfo(modelId) {
+    const { all } = await this.getAllAvailableModels();
+    const modelInfo = all.find(model => model.id === modelId);
+
     if (!modelInfo) {
       throw new Error(`Unknown model: ${modelId}`);
     }
-    
+
     return {
       provider: modelInfo.provider,
       model: modelInfo,
@@ -93,7 +62,7 @@ class AIProviderService {
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
         
-        const { provider, model, service } = this.getProviderInfo(modelId);
+        const { provider, model, service } = await this.getProviderInfo(modelId);
         console.log(`[AIProvider] Using provider: ${provider}`);
         
         let result;
@@ -264,38 +233,13 @@ class AIProviderService {
   // Generate questions using Gemini
   async generateWithGemini(prompt, modelId, geminiService, options) {
     console.log(`[AIProvider] Generating with Gemini model: ${modelId}`);
-    
-    // ENHANCED: Try structured output first for better reliability
-    let result;
-    
-    if (modelId === 'gemini-2.5-pro') {
-      console.log('[AIProvider] Using Gemini-2.5-Pro with structured output approach (more reliable)');
-      try {
-        // Try structured output first (more reliable)
-        result = await geminiService.generateQuestionsStructured(prompt, modelId);
-      } catch (structuredError) {
-        console.log('[AIProvider] Structured output failed, falling back to function calling');
-        console.log('[AIProvider] Structured error:', structuredError.message);
-        
-        // Fallback to function calling
-        try {
-          result = await geminiService.generateQuestions(prompt, modelId);
-        } catch (functionError) {
-          console.error('[AIProvider] Both structured and function calling failed');
-          throw new Error(`Gemini Pro failed with both methods: ${functionError.message}`);
-        }
-      }
-    } else {
-      console.log('[AIProvider] Using Gemini Flash with structured output approach');
-      // Use structured output for Flash model (more reliable for structured data)
-      result = await geminiService.generateQuestionsStructured(prompt, modelId);
-    }
-    
+
+    const result = await geminiService.generateQuestionsStructured(prompt, modelId);
+
     if (result.success && result.questions && result.questions.length > 0) {
       console.log(`[AIProvider] Gemini successfully generated ${result.questions.length} questions`);
       return result.questions;
     } else {
-      console.error('[AIProvider] Gemini result:', result);
       throw new Error('Gemini did not return valid questions');
     }
   }
@@ -353,49 +297,12 @@ class AIProviderService {
     return results;
   }
 
-  // Get provider-specific usage stats if available
   async getProviderStats() {
-    const stats = {
-      openai: {
-        available: !!process.env.OPENAI_API_KEY,
-        models: this.getAllAvailableModels().openai.length
-      },
-      gemini: {
-        available: !!process.env.GEMINI_KEY,
-        models: this.getAllAvailableModels().gemini.length
-      }
+    const { openai, gemini } = await this.getAllAvailableModels();
+    return {
+      openai: { available: !!process.env.OPENAI_API_KEY, models: openai.length },
+      gemini: { available: !!process.env.GEMINI_KEY, models: gemini.length },
     };
-
-    return stats;
-  }
-
-  // Method to get recommended model based on use case
-  getRecommendedModel(useCase = 'default') {
-    const models = this.getAllAvailableModels().all;
-    
-    switch (useCase) {
-      case 'speed':
-        // Prioritize speed
-        return models.find(m => m.id === 'gpt-4o-mini') || 
-               models.find(m => m.id === 'gemini-flash-latest') ||
-               models[0];
-               
-      case 'quality':
-        // Prioritize quality
-        return models.find(m => m.id === 'gemini-2.5-pro') || 
-               models.find(m => m.id === 'gpt-4.1') ||
-               models[0];
-               
-      case 'cost':
-        // Prioritize cost-effectiveness
-        return models.find(m => m.id === 'gpt-4o-mini') || 
-               models.find(m => m.id === 'gemini-flash-latest') ||
-               models[0];
-               
-      default:
-        // Balanced recommendation
-        return models.find(m => m.id === 'gpt-4o-mini') || models[0];
-    }
   }
 }
 

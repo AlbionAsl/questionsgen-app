@@ -7,7 +7,7 @@ const questionsService = require('../services/questionsService');
 // Get all available AI models
 router.get('/models', async (req, res) => {
   try {
-    const models = aiProviderService.getAllAvailableModels();
+    const models = await aiProviderService.getAllAvailableModels();
     res.json({
       success: true,
       models: models.all,
@@ -18,10 +18,10 @@ router.get('/models', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching AI models:', error);
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       error: error.message,
-      models: [] // Return empty array as fallback
+      models: []
     });
   }
 });
@@ -65,24 +65,6 @@ router.get('/providers/:provider/test', async (req, res) => {
   }
 });
 
-// Get recommended model for a specific use case
-router.get('/models/recommend/:useCase?', async (req, res) => {
-  try {
-    const useCase = req.params.useCase || 'default';
-    const recommendedModel = aiProviderService.getRecommendedModel(useCase);
-    res.json({
-      success: true,
-      recommendedModel,
-      useCase
-    });
-  } catch (error) {
-    console.error('Error getting recommended model:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-});
 
 // Generate sample questions (for testing AI models)
 router.post('/test/generate', async (req, res) => {
@@ -167,7 +149,7 @@ router.get('/analytics/models', async (req, res) => {
 router.get('/models/:modelId', async (req, res) => {
   try {
     const { modelId } = req.params;
-    const models = aiProviderService.getAllAvailableModels().all;
+    const { all: models } = await aiProviderService.getAllAvailableModels();
     const model = models.find(m => m.id === modelId);
     
     if (!model) {

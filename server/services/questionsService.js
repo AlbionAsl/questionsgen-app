@@ -85,8 +85,8 @@ class QuestionService {
     }
   }
 
-  getAvailableModels() {
-    return aiProviderService.getAllAvailableModels();
+  async getAvailableModels() {
+    return await aiProviderService.getAllAvailableModels();
   }
 
   async testAIConnections() {

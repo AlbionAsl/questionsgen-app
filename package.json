@@ -12,7 +12,8 @@
     "db:stats": "node server/utils/databaseUtils.js stats",
     "db:cleanup": "node server/utils/databaseUtils.js cleanup",
     "db:duplicates": "node server/utils/databaseUtils.js duplicates",
-    "db:export": "node server/utils/databaseUtils.js export"
+    "db:export": "node server/utils/databaseUtils.js export",
+    "test": "jest"
   },
   "dependencies": {
     "@google/genai": "^1.10.0",
@@ -34,6 +35,7 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.4.21",
+    "jest": "^30.4.2",
     "nodemon": "^3.1.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.11"
