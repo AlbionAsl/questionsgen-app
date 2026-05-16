@@ -371,17 +371,16 @@ export default function PopularPages({ onStart }) {
       
       if (data.success && data.setting) {
         const setting = data.setting;
-        
-        // Update form data with loaded settings
+
         setFormData({
-          animeName: setting.animeName || '',
-          fandomWikiName: setting.fandomWikiName || '',
-          selectedPages: setting.selectedPages || [],
-          maxApiCalls: setting.maxApiCalls || 10,
-          questionsPerChunk: setting.questionsPerChunk || 4,
-          openaiModel: setting.openaiModel || 'gpt-4o-mini',
-          promptInstructions: setting.promptInstructions || formData.promptInstructions,
-          skipSections: setting.skipSections || []
+          animeName: setting.anime_name || '',
+          fandomWikiName: setting.fandom_wiki_name || '',
+          selectedPages: setting.selected_pages || [],
+          maxApiCalls: setting.max_api_calls || 10,
+          questionsPerChunk: setting.questions_per_chunk || 4,
+          openaiModel: setting.model || 'gpt-4o-mini',
+          promptInstructions: setting.prompt_instructions || formData.promptInstructions,
+          skipSections: setting.skip_sections || []
         });
 
         // Clear search results and anime search
@@ -1137,13 +1136,13 @@ export default function PopularPages({ onStart }) {
                           <div className="flex-1">
                             <h4 className="font-medium text-gray-900">{setting.name}</h4>
                             <div className="text-sm text-gray-600 mt-1 space-y-1">
-                              <p><strong>Anime:</strong> {setting.animeName}</p>
-                              <p><strong>Wiki:</strong> {setting.fandomWikiName}</p>
-                              <p><strong>Pages:</strong> {setting.selectedPages?.length || 0} selected</p>
-                              <p><strong>Model:</strong> {setting.openaiModel}</p>
+                              <p><strong>Anime:</strong> {setting.anime_name}</p>
+                              <p><strong>Wiki:</strong> {setting.fandom_wiki_name}</p>
+                              <p><strong>Pages:</strong> {setting.selected_pages?.length || 0} selected</p>
+                              <p><strong>Model:</strong> {setting.model}</p>
                               <div className="flex items-center space-x-4 text-xs text-gray-500 mt-2">
-                                <span>Created: {new Date(setting.createdAt).toLocaleDateString()}</span>
-                                <span>Used: {setting.usageCount || 0} times</span>
+                                <span>Created: {new Date(setting.created_at).toLocaleDateString()}</span>
+                                <span>Used: {setting.usage_count || 0} times</span>
                               </div>
                             </div>
                           </div>
