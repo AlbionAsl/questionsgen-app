@@ -2,3 +2,11 @@
 node_modules
 package-lock.json
 serviceAccount.json
+.claude/settings.json
+.claude/settings.local.json
+.claude/statusline-wrapper.sh
+.claude/statusline-command.sh
+.cluade
+.config
+client/build
+documentation

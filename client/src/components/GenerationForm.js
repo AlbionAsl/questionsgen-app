@@ -10,6 +10,7 @@ export default function GenerationForm({ onStart }) {
     individualPages: [],
     maxApiCalls: 10,
     questionsPerChunk: 4,
+    wordsPerChunk: 100,
     openaiModel: '',
     promptInstructions: 'Each question should have one correct answer and three incorrect but plausible options. Create challenging and fun questions. Try and be specific if you can. For example, mention names of characters, groups, or locations if you have this information. NEVER mention "according to the text" or something similar.'
   });
@@ -624,7 +625,7 @@ export default function GenerationForm({ onStart }) {
           {/* Advanced Settings */}
           <div className="border-t pt-6">
             <h3 className="text-lg font-medium text-gray-900 mb-4">⚙️ Advanced Settings</h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700">Max API Calls</label>
                 <input
@@ -638,7 +639,7 @@ export default function GenerationForm({ onStart }) {
                 <p className="mt-1 text-xs text-gray-500">Limits AI API usage</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Base Question Multiplier</label>
+                <label className="block text-sm font-medium text-gray-700">Questions per Chunk</label>
                 <input
                   type="number"
                   value={formData.questionsPerChunk}
@@ -647,7 +648,19 @@ export default function GenerationForm({ onStart }) {
                   max="20"
                   className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
                 />
-                <p className="mt-1 text-xs text-gray-500">Fallback value (actual questions = section words ÷ 100)</p>
+                <p className="mt-1 text-xs text-gray-500">Questions generated per word chunk</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Words per Chunk</label>
+                <input
+                  type="number"
+                  value={formData.wordsPerChunk}
+                  onChange={(e) => setFormData({ ...formData, wordsPerChunk: parseInt(e.target.value) })}
+                  min="10"
+                  max="500"
+                  className="mt-1 shadow-sm focus:ring-blue-500 focus:border-blue-500 block w-full sm:text-sm border-gray-300 rounded-md px-3 py-2"
+                />
+                <p className="mt-1 text-xs text-gray-500">Word count that equals one chunk</p>
               </div>
             </div>
           </div>

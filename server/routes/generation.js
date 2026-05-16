@@ -83,7 +83,7 @@ router.post('/settings', async (req, res) => {
   try {
     const {
       name, animeName, fandomWikiName, selectedPages,
-      maxApiCalls, questionsPerChunk, openaiModel,
+      maxApiCalls, questionsPerChunk, wordsPerChunk, openaiModel,
       promptInstructions, skipSections
     } = req.body;
 
@@ -103,6 +103,7 @@ router.post('/settings', async (req, res) => {
         selected_pages: selectedPages || [],
         max_api_calls: parseInt(maxApiCalls) || 10,
         questions_per_chunk: parseInt(questionsPerChunk) || 4,
+        words_per_chunk: parseInt(wordsPerChunk) || 100,
         model: openaiModel || 'gpt-4o-mini',
         prompt_instructions: promptInstructions || '',
         skip_sections: skipSections || [],
@@ -128,7 +129,7 @@ router.put('/settings/:id', async (req, res) => {
   try {
     const {
       name, animeName, fandomWikiName, selectedPages,
-      maxApiCalls, questionsPerChunk, openaiModel,
+      maxApiCalls, questionsPerChunk, wordsPerChunk, openaiModel,
       promptInstructions, skipSections
     } = req.body;
 
@@ -148,6 +149,7 @@ router.put('/settings/:id', async (req, res) => {
         selected_pages: selectedPages || [],
         max_api_calls: parseInt(maxApiCalls) || 10,
         questions_per_chunk: parseInt(questionsPerChunk) || 4,
+        words_per_chunk: parseInt(wordsPerChunk) || 100,
         model: openaiModel || 'gpt-4o-mini',
         prompt_instructions: promptInstructions || '',
         skip_sections: skipSections || [],
@@ -214,6 +216,7 @@ router.post('/start', async (req, res) => {
     individualPages,
     maxApiCalls,
     questionsPerChunk,
+    wordsPerChunk,
     openaiModel,
     promptInstructions,
     skipSections
@@ -252,6 +255,7 @@ router.post('/start', async (req, res) => {
       individualPages || [],
       maxApiCalls || 10,
       questionsPerChunk || 4,
+      wordsPerChunk || 100,
       skipSections || [],
       io
     );
@@ -385,6 +389,7 @@ async function generateQuestions(
   individualPages,
   maxApiCalls,
   questionsPerChunk,
+  wordsPerChunk,
   skipSections,
   io
 ) {
@@ -463,16 +468,18 @@ async function generateQuestions(
         const section = sections[sectionIndex];
         const sectionId = scrapingService.generateSectionId(page.category, page.title, section.title, fandomWikiName);
 
-        log(`Processing section: "${section.title}" (${section.wordCount} words, ${section.questionCount} questions planned)`);
+        const questionCount = Math.max(1, Math.ceil(section.wordCount * questionsPerChunk / wordsPerChunk));
+
+        log(`Processing section: "${section.title}" (${section.wordCount} words, ${questionCount} questions planned)`);
 
         const isProcessed = await scrapingService.isSectionProcessed(sectionId);
 
         if (!isProcessed) {
-          log(`Generating ${section.questionCount} questions for section: "${section.title}"`);
+          log(`Generating ${questionCount} questions for section: "${section.title}"`);
 
           const questions = await questionsService.generateQuestions(
             section.content,
-            section.questionCount,
+            questionCount,
             animeName,
             page.category,
             page.title,
